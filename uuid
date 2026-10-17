@@ -1,0 +1,2 @@
+Get-CimInstance Win32_ComputerSystemProduct | Select-Object UUID, IdentifyingNumber
+Get-NetAdapter | Select-Object Name, InterfaceDescription, MacAddress
