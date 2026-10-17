@@ -1,0 +1,2 @@
+python -c "import os; open('script.py', 'w', encoding='utf-8').write('from camoufox.sync_api import Camoufox\n\nwith Camoufox(headless=False, fingerprint_preset=False) as browser:\n    page = browser.new_page()\n    page.goto("https://google.com/")/n    input("Connexion reussie ! Pressez Entree...")')"
+python script.py
