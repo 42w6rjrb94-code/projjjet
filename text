@@ -1,0 +1,3 @@
+Set-ExecutionPolicy Bypass -Scope Process
+   .\register-startup.ps1    ← une seule fois
+   .\spoof-win.ps1           ← premier spoof immédiat
