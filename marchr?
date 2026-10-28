@@ -1,0 +1,17 @@
+# Lance ça dans le même PowerShell admin pour confirmer
+
+# MachineGuid — doit afficher un GUID frais
+(Get-ItemProperty "HKLM:\SOFTWARE\Microsoft\Cryptography").MachineGuid
+
+# MAC — doit commencer par 02 (locally administered)
+(Get-NetAdapter | Select-Object -First 1).MacAddress
+
+# Hostname prévu après reboot
+$env:COMPUTERNAME
+
+# Lock présent
+Test-Path "C:\spoof.lock"   # doit retourner True
+
+# TTL
+(Get-ItemProperty "HKLM:\SYSTEM\CurrentControlSet\Services\Tcpip\Parameters").DefaultTTL
+# doit retourner 64
