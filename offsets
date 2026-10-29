@@ -1,66 +1,43 @@
 #pragma once
-#include <nlohmann/json.hpp>
-#include <fstream>
+#include <Windows.h>
+#include <intrin.h>
 #include <string>
+#include <sstream>
+#include <iomanip>
+#include <vector>
+#include <openssl/sha.h>
 
-struct Config {
-    bool  espEnabled      = true;
-    bool  espBoxes        = true;
-    bool  espHP           = true;
-    bool  espNames        = true;
-    bool  espWeapons      = true;
-    bool  autoDodge       = true;
-    int   dodgeDelayMs    = 0;
-    bool  dodgeGroundOnly = false;
-    bool  dexBot          = true;
-    int   comboDelayMs    = 16;
-    bool  dexBotOnlyHit   = true;
-    bool  weaponSnap      = true;
-    float snapRangeUnits  = 400.f;
-    bool  randomizeTimings= true;
-    int   timingVarianceMs= 8;
-
-    void Load(const std::string& path = "bhcheat_cfg.json") {
-        std::ifstream f(path);
-        if (!f.is_open()) { Save(path); return; }
-        try {
-            auto j = nlohmann::json::parse(f);
-            espEnabled       = j.value("espEnabled",       espEnabled);
-            espBoxes         = j.value("espBoxes",         espBoxes);
-            espHP            = j.value("espHP",            espHP);
-            espNames         = j.value("espNames",         espNames);
-            espWeapons       = j.value("espWeapons",       espWeapons);
-            autoDodge        = j.value("autoDodge",        autoDodge);
-            dodgeDelayMs     = j.value("dodgeDelayMs",     dodgeDelayMs);
-            dodgeGroundOnly  = j.value("dodgeGroundOnly",  dodgeGroundOnly);
-            dexBot           = j.value("dexBot",           dexBot);
-            comboDelayMs     = j.value("comboDelayMs",     comboDelayMs);
-            dexBotOnlyHit    = j.value("dexBotOnlyHit",   dexBotOnlyHit);
-            weaponSnap       = j.value("weaponSnap",       weaponSnap);
-            snapRangeUnits   = j.value("snapRangeUnits",   snapRangeUnits);
-            randomizeTimings = j.value("randomizeTimings", randomizeTimings);
-            timingVarianceMs = j.value("timingVarianceMs", timingVarianceMs);
-        } catch (...) { Save(path); }
+namespace HWID {
+    static std::string GetCPUID() {
+        int r[4]{};
+        __cpuid(r, 1);
+        std::ostringstream ss;
+        ss << std::hex << r[0] << r[3];
+        return ss.str();
     }
-
-    void Save(const std::string& path = "bhcheat_cfg.json") {
-        nlohmann::json j;
-        j["espEnabled"]       = espEnabled;
-        j["espBoxes"]         = espBoxes;
-        j["espHP"]            = espHP;
-        j["espNames"]         = espNames;
-        j["espWeapons"]       = espWeapons;
-        j["autoDodge"]        = autoDodge;
-        j["dodgeDelayMs"]     = dodgeDelayMs;
-        j["dodgeGroundOnly"]  = dodgeGroundOnly;
-        j["dexBot"]           = dexBot;
-        j["comboDelayMs"]     = comboDelayMs;
-        j["dexBotOnlyHit"]    = dexBotOnlyHit;
-        j["weaponSnap"]       = weaponSnap;
-        j["snapRangeUnits"]   = snapRangeUnits;
-        j["randomizeTimings"] = randomizeTimings;
-        j["timingVarianceMs"] = timingVarianceMs;
-        std::ofstream f(path);
-        f << j.dump(4);
+    static std::string GetVolSerial() {
+        DWORD s = 0;
+        GetVolumeInformationW(L"C:\\", nullptr, 0, &s, nullptr, nullptr, nullptr, 0);
+        std::ostringstream ss;
+        ss << std::hex << std::uppercase << s;
+        return ss.str();
     }
-};
+    static std::string Generate() {
+        std::string raw = GetCPUID() + GetVolSerial();
+        unsigned char hash[SHA256_DIGEST_LENGTH];
+        SHA256((unsigned char*)raw.c_str(), raw.size(), hash);
+        std::ostringstream ss;
+        for (int i = 0; i < 8; i++)
+            ss << std::hex << std::uppercase
+               << std::setw(2) << std::setfill('0') << (int)hash[i];
+        return ss.str();
+    }
+    static bool IsAuthorized(const std::string& hwid) {
+        static const std::vector<std::string> whitelist = {
+            // FILL: colle les HWIDs de tes clients ici
+        };
+        for (const auto& w : whitelist)
+            if (w == hwid) return true;
+        return false;
+    }
+}
