@@ -1,64 +1,66 @@
 #pragma once
-#include <Windows.h>
-#include <TlHelp32.h>
+#include <nlohmann/json.hpp>
+#include <fstream>
 #include <string>
-#include <vector>
 
-class Memory {
-public:
-    HANDLE    handle   = nullptr;
-    DWORD     pid      = 0;
-    uintptr_t monoBase = 0;
-    uintptr_t gameBase = 0;
-    HWND      gameHwnd = nullptr;
+struct Config {
+    bool  espEnabled      = true;
+    bool  espBoxes        = true;
+    bool  espHP           = true;
+    bool  espNames        = true;
+    bool  espWeapons      = true;
+    bool  autoDodge       = true;
+    int   dodgeDelayMs    = 0;
+    bool  dodgeGroundOnly = false;
+    bool  dexBot          = true;
+    int   comboDelayMs    = 16;
+    bool  dexBotOnlyHit   = true;
+    bool  weaponSnap      = true;
+    float snapRangeUnits  = 400.f;
+    bool  randomizeTimings= true;
+    int   timingVarianceMs= 8;
 
-    ~Memory() { if (handle) CloseHandle(handle); }
-
-    bool Attach(const std::wstring& proc) {
-        pid = FindPID(proc);
-        if (!pid) return false;
-        handle = OpenProcess(PROCESS_ALL_ACCESS, FALSE, pid);
-        if (!handle) return false;
-        monoBase = GetModBase(L"mono-2.0-bdwgc.dll");
-        gameBase = GetModBase(L"Brawlhalla.exe");
-        gameHwnd = FindWindowW(nullptr, L"Brawlhalla");
-        return monoBase && gameBase;
+    void Load(const std::string& path = "bhcheat_cfg.json") {
+        std::ifstream f(path);
+        if (!f.is_open()) { Save(path); return; }
+        try {
+            auto j = nlohmann::json::parse(f);
+            espEnabled       = j.value("espEnabled",       espEnabled);
+            espBoxes         = j.value("espBoxes",         espBoxes);
+            espHP            = j.value("espHP",            espHP);
+            espNames         = j.value("espNames",         espNames);
+            espWeapons       = j.value("espWeapons",       espWeapons);
+            autoDodge        = j.value("autoDodge",        autoDodge);
+            dodgeDelayMs     = j.value("dodgeDelayMs",     dodgeDelayMs);
+            dodgeGroundOnly  = j.value("dodgeGroundOnly",  dodgeGroundOnly);
+            dexBot           = j.value("dexBot",           dexBot);
+            comboDelayMs     = j.value("comboDelayMs",     comboDelayMs);
+            dexBotOnlyHit    = j.value("dexBotOnlyHit",   dexBotOnlyHit);
+            weaponSnap       = j.value("weaponSnap",       weaponSnap);
+            snapRangeUnits   = j.value("snapRangeUnits",   snapRangeUnits);
+            randomizeTimings = j.value("randomizeTimings", randomizeTimings);
+            timingVarianceMs = j.value("timingVarianceMs", timingVarianceMs);
+        } catch (...) { Save(path); }
     }
 
-    template<typename T> T Read(uintptr_t addr) const {
-        T v{}; SIZE_T n;
-        ReadProcessMemory(handle, (LPCVOID)addr, &v, sizeof(T), &n);
-        return v;
-    }
-    template<typename T> void Write(uintptr_t addr, T val) {
-        WriteProcessMemory(handle, (LPVOID)addr, &val, sizeof(T), nullptr);
-    }
-    std::string ReadMonoStr(uintptr_t p) {
-        if (!p) return "";
-        int32_t len = Read<int32_t>(p + 0x10);
-        if (len <= 0 || len > 256) return "";
-        std::vector<wchar_t> buf(len + 1, 0);
-        ReadProcessMemory(handle, (LPCVOID)(p + 0x14), buf.data(), len * 2, nullptr);
-        return std::string(buf.begin(), buf.begin() + len);
-    }
-
-private:
-    DWORD FindPID(const std::wstring& name) {
-        PROCESSENTRY32W pe{ sizeof(pe) };
-        HANDLE s = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
-        DWORD r = 0;
-        if (Process32FirstW(s, &pe)) do {
-            if (name == pe.szExeFile) { r = pe.th32ProcessID; break; }
-        } while (Process32NextW(s, &pe));
-        CloseHandle(s); return r;
-    }
-    uintptr_t GetModBase(const std::wstring& dll) {
-        MODULEENTRY32W me{ sizeof(me) };
-        HANDLE s = CreateToolhelp32Snapshot(TH32CS_SNAPMODULE|TH32CS_SNAPMODULE32, pid);
-        uintptr_t r = 0;
-        if (Module32FirstW(s, &me)) do {
-            if (dll == me.szModule) { r = (uintptr_t)me.modBaseAddr; break; }
-        } while (Module32NextW(s, &me));
-        CloseHandle(s); return r;
+    void Save(const std::string& path = "bhcheat_cfg.json") {
+        nlohmann::json j;
+        j["espEnabled"]       = espEnabled;
+        j["espBoxes"]         = espBoxes;
+        j["espHP"]            = espHP;
+        j["espNames"]         = espNames;
+        j["espWeapons"]       = espWeapons;
+        j["autoDodge"]        = autoDodge;
+        j["dodgeDelayMs"]     = dodgeDelayMs;
+        j["dodgeGroundOnly"]  = dodgeGroundOnly;
+        j["dexBot"]           = dexBot;
+        j["comboDelayMs"]     = comboDelayMs;
+        j["dexBotOnlyHit"]    = dexBotOnlyHit;
+        j["weaponSnap"]       = weaponSnap;
+        j["snapRangeUnits"]   = snapRangeUnits;
+        j["randomizeTimings"] = randomizeTimings;
+        j["timingVarianceMs"] = timingVarianceMs;
+        std::ofstream f(path);
+        f << j.dump(4);
     }
 };
