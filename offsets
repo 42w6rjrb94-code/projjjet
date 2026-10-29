@@ -3,44 +3,90 @@
 #include "input.hpp"
 #include "config.hpp"
 #include <vector>
+#include <functional>
 #include <thread>
 #include <chrono>
 #include <cmath>
+#include <atomic>
 
-class AutoDodge {
+struct ComboStep {
+    std::function<void()> action;
+    int delayMs;
+};
+
+class DexBot {
     Config& cfg;
+    std::atomic<bool> executing{ false };
 
-    static WORD DodgeDir(const BHPlayer& local, const BHPlayer& enemy) {
-        float dx = enemy.worldPos.x - local.worldPos.x;
-        if (std::abs(dx) > 50.f)
-            return dx > 0 ? Input::KEY_LEFT : Input::KEY_RIGHT;
-        return Input::KEY_UP;
+    static bool InHitstun(const BHPlayer& e) {
+        float spd = std::sqrtf(e.velocity.x*e.velocity.x + e.velocity.y*e.velocity.y);
+        return (e.atkState == AttackState::Idle && spd > 200.f);
+    }
+
+    std::vector<ComboStep> BuildCombo(const BHPlayer& local, const BHPlayer& enemy) {
+        int v = cfg.timingVarianceMs;
+        bool onGround  = local.isGrounded;
+        bool enemyGnd  = enemy.isGrounded;
+        WORD dir = enemy.worldPos.x > local.worldPos.x ? Input::KEY_RIGHT : Input::KEY_LEFT;
+
+        if (onGround && enemyGnd) {
+            return {
+                { [=]{ Input::PressKey(dir, 30, v); }, Input::Jitter(cfg.comboDelayMs, v) },
+                { [=]{ Input::PressKey(dir, 30, v); }, Input::Jitter(cfg.comboDelayMs, v) },
+                { [=]{ Input::PressKey(Input::KEY_ATTACK, 50, v); }, Input::Jitter(180, v) },
+                { [=]{ Input::PressKey(Input::KEY_ATTACK, 50, v); }, Input::Jitter(180, v) },
+                { [=]{ Input::PressKey(Input::KEY_SIG,    50, v); }, 0 },
+            };
+        }
+        if (onGround && !enemyGnd) {
+            return {
+                { [=]{ Input::PressKey(Input::KEY_JUMP, 50, v); }, Input::Jitter(cfg.comboDelayMs, v) },
+                { [=]{ Input::HoldKey(dir); }, 50 },
+                { [=]{ Input::PressKey(Input::KEY_ATTACK, 50, v); }, Input::Jitter(180, v) },
+                { [=]{ Input::ReleaseKey(dir); }, 0 },
+                { [=]{ Input::HoldKey(Input::KEY_DOWN);
+                       Input::PressKey(Input::KEY_ATTACK, 50, v);
+                       Input::ReleaseKey(Input::KEY_DOWN); }, Input::Jitter(180, v) },
+            };
+        }
+        return {
+            { [=]{ Input::HoldKey(dir); }, 30 },
+            { [=]{ Input::PressKey(Input::KEY_ATTACK, 50, v); }, Input::Jitter(200, v) },
+            { [=]{ Input::ReleaseKey(dir); }, 0 },
+            { [=]{ Input::PressKey(Input::KEY_JUMP, 50, v); }, Input::Jitter(cfg.comboDelayMs, v) },
+            { [=]{ Input::HoldKey(dir); }, 30 },
+            { [=]{ Input::PressKey(Input::KEY_ATTACK, 50, v); }, Input::Jitter(200, v) },
+            { [=]{ Input::ReleaseKey(dir); }, 0 },
+        };
+    }
+
+    void ExecCombo(std::vector<ComboStep> steps) {
+        executing = true;
+        for (auto& s : steps) {
+            s.action();
+            if (s.delayMs > 0)
+                std::this_thread::sleep_for(std::chrono::milliseconds(s.delayMs));
+        }
+        executing = false;
     }
 
 public:
-    AutoDodge(Config& c) : cfg(c) {}
+    DexBot(Config& c) : cfg(c) {}
 
     void Tick(const std::vector<BHPlayer>& players) {
-        if (!cfg.autoDodge) return;
+        if (!cfg.dexBot || executing) return;
         const BHPlayer* local = nullptr;
         for (const auto& p : players) if (p.isLocal) { local = &p; break; }
-        if (!local || local->dodgeCD > 0.f) return;
-        if (cfg.dodgeGroundOnly && !local->isGrounded) return;
+        if (!local) return;
 
         for (const auto& enemy : players) {
             if (enemy.isLocal) continue;
-            if (enemy.atkState != AttackState::Active) continue;
-            if (enemy.distToLocal > 300.f) continue;
-
-            int delay = Input::Jitter(cfg.dodgeDelayMs, cfg.timingVarianceMs);
-            if (delay > 0)
-                std::this_thread::sleep_for(std::chrono::milliseconds(delay));
-
-            WORD dir = DodgeDir(*local, enemy);
-            Input::HoldKey(dir);
-            std::this_thread::sleep_for(std::chrono::milliseconds(20));
-            Input::PressKey(Input::KEY_DODGE, 50, cfg.timingVarianceMs);
-            Input::ReleaseKey(dir);
+            if (cfg.dexBotOnlyHit && !InHitstun(enemy)) continue;
+            if (enemy.distToLocal > 250.f) continue;
+            auto combo = BuildCombo(*local, enemy);
+            std::thread([this, combo = std::move(combo)]() mutable {
+                ExecCombo(std::move(combo));
+            }).detach();
             break;
         }
     }
