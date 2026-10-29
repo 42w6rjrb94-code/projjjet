@@ -1,17 +1,13 @@
-# Lance ça dans le même PowerShell admin pour confirmer
+# Lance ça dans PowerShell admin dans la VM
 
-# MachineGuid — doit afficher un GUID frais
+# 1. MachineGuid — doit être un GUID random, pas celui d'origine Windows
 (Get-ItemProperty "HKLM:\SOFTWARE\Microsoft\Cryptography").MachineGuid
 
-# MAC — doit commencer par 02 (locally administered)
-(Get-NetAdapter | Select-Object -First 1).MacAddress
-
-# Hostname prévu après reboot
+# 2. Hostname actuel
 $env:COMPUTERNAME
 
-# Lock présent
-Test-Path "C:\spoof.lock"   # doit retourner True
-
-# TTL
+# 3. TTL — doit être 64
 (Get-ItemProperty "HKLM:\SYSTEM\CurrentControlSet\Services\Tcpip\Parameters").DefaultTTL
-# doit retourner 64
+
+# 4. Lock présent
+Get-Content "C:\spoof.lock"
