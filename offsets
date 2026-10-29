@@ -3,91 +3,34 @@
 #include "input.hpp"
 #include "config.hpp"
 #include <vector>
-#include <functional>
 #include <thread>
 #include <chrono>
-#include <cmath>
-#include <atomic>
 
-struct ComboStep {
-    std::function<void()> action;
-    int delayMs;
-};
-
-class DexBot {
+class WeaponSnap {
     Config& cfg;
-    std::atomic<bool> executing{ false };
-
-    static bool InHitstun(const BHPlayer& e) {
-        float spd = std::sqrtf(e.velocity.x*e.velocity.x + e.velocity.y*e.velocity.y);
-        return (e.atkState == AttackState::Idle && spd > 200.f);
-    }
-
-    std::vector<ComboStep> BuildCombo(const BHPlayer& local, const BHPlayer& enemy) {
-        int v = cfg.timingVarianceMs;
-        bool onGround  = local.isGrounded;
-        bool enemyGnd  = enemy.isGrounded;
-        WORD dir = enemy.worldPos.x > local.worldPos.x ? Input::KEY_RIGHT : Input::KEY_LEFT;
-
-        if (onGround && enemyGnd) {
-            return {
-                { [=]{ Input::PressKey(dir, 30, v); }, Input::Jitter(cfg.comboDelayMs, v) },
-                { [=]{ Input::PressKey(dir, 30, v); }, Input::Jitter(cfg.comboDelayMs, v) },
-                { [=]{ Input::PressKey(Input::KEY_ATTACK, 50, v); }, Input::Jitter(180, v) },
-                { [=]{ Input::PressKey(Input::KEY_ATTACK, 50, v); }, Input::Jitter(180, v) },
-                { [=]{ Input::PressKey(Input::KEY_SIG,    50, v); }, 0 },
-            };
-        }
-        if (onGround && !enemyGnd) {
-            return {
-                { [=]{ Input::PressKey(Input::KEY_JUMP, 50, v); }, Input::Jitter(cfg.comboDelayMs, v) },
-                { [=]{ Input::HoldKey(dir); }, 50 },
-                { [=]{ Input::PressKey(Input::KEY_ATTACK, 50, v); }, Input::Jitter(180, v) },
-                { [=]{ Input::ReleaseKey(dir); }, 0 },
-                { [=]{ Input::HoldKey(Input::KEY_DOWN);
-                       Input::PressKey(Input::KEY_ATTACK, 50, v);
-                       Input::ReleaseKey(Input::KEY_DOWN); }, Input::Jitter(180, v) },
-            };
-        }
-        return {
-            { [=]{ Input::HoldKey(dir); }, 30 },
-            { [=]{ Input::PressKey(Input::KEY_ATTACK, 50, v); }, Input::Jitter(200, v) },
-            { [=]{ Input::ReleaseKey(dir); }, 0 },
-            { [=]{ Input::PressKey(Input::KEY_JUMP, 50, v); }, Input::Jitter(cfg.comboDelayMs, v) },
-            { [=]{ Input::HoldKey(dir); }, 30 },
-            { [=]{ Input::PressKey(Input::KEY_ATTACK, 50, v); }, Input::Jitter(200, v) },
-            { [=]{ Input::ReleaseKey(dir); }, 0 },
-        };
-    }
-
-    void ExecCombo(std::vector<ComboStep> steps) {
-        executing = true;
-        for (auto& s : steps) {
-            s.action();
-            if (s.delayMs > 0)
-                std::this_thread::sleep_for(std::chrono::milliseconds(s.delayMs));
-        }
-        executing = false;
-    }
-
 public:
-    DexBot(Config& c) : cfg(c) {}
+    WeaponSnap(Config& c) : cfg(c) {}
 
-    void Tick(const std::vector<BHPlayer>& players) {
-        if (!cfg.dexBot || executing) return;
+    const BHWeapon* Nearest(const std::vector<BHWeapon>& weapons) {
+        const BHWeapon* best = nullptr;
+        for (const auto& w : weapons)
+            if (!best || w.distToLocal < best->distToLocal) best = &w;
+        return best;
+    }
+
+    void Tick(const std::vector<BHPlayer>& players,
+              const std::vector<BHWeapon>& weapons) {
+        if (!cfg.weaponSnap) return;
         const BHPlayer* local = nullptr;
         for (const auto& p : players) if (p.isLocal) { local = &p; break; }
-        if (!local) return;
+        if (!local || local->weaponType != -1) return;
 
-        for (const auto& enemy : players) {
-            if (enemy.isLocal) continue;
-            if (cfg.dexBotOnlyHit && !InHitstun(enemy)) continue;
-            if (enemy.distToLocal > 250.f) continue;
-            auto combo = BuildCombo(*local, enemy);
-            std::thread([this, combo = std::move(combo)]() mutable {
-                ExecCombo(std::move(combo));
-            }).detach();
-            break;
-        }
+        const BHWeapon* w = Nearest(weapons);
+        if (!w || w->distToLocal > cfg.snapRangeUnits) return;
+
+        WORD dir = w->pos.x > local->worldPos.x ? Input::KEY_RIGHT : Input::KEY_LEFT;
+        Input::HoldKey(dir);
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        Input::ReleaseKey(dir);
     }
 };
