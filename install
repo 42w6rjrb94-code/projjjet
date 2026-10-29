@@ -1,1 +1,13 @@
-git clone https://github.com/ocornut/imgui vendor/imgui
+cd src
+  type nul > main.cpp
+  type nul > memory.hpp
+  type nul > offsets.hpp
+  type nul > config.hpp
+  type nul > hwid.hpp
+  type nul > entities.hpp
+  type nul > input.hpp
+  type nul > autododge.hpp
+  type nul > dexbot.hpp
+  type nul > weaponsnap.hpp
+  type nul > renderer.hpp
+  cd ..
