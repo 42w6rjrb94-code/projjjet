@@ -1,66 +1,42 @@
 #pragma once
-#include <nlohmann/json.hpp>
-#include <fstream>
-#include <string>
+#include <Windows.h>
+#include <random>
+#include <thread>
+#include <chrono>
 
-struct Config {
-    bool  espEnabled      = true;
-    bool  espBoxes        = true;
-    bool  espHP           = true;
-    bool  espNames        = true;
-    bool  espWeapons      = true;
-    bool  autoDodge       = true;
-    int   dodgeDelayMs    = 0;
-    bool  dodgeGroundOnly = false;
-    bool  dexBot          = true;
-    int   comboDelayMs    = 16;
-    bool  dexBotOnlyHit   = true;
-    bool  weaponSnap      = true;
-    float snapRangeUnits  = 400.f;
-    bool  randomizeTimings= true;
-    int   timingVarianceMs= 8;
+namespace Input {
+    static std::mt19937 rng{ std::random_device{}() };
 
-    void Load(const std::string& path = "bhcheat_cfg.json") {
-        std::ifstream f(path);
-        if (!f.is_open()) { Save(path); return; }
-        try {
-            auto j = nlohmann::json::parse(f);
-            espEnabled       = j.value("espEnabled",       espEnabled);
-            espBoxes         = j.value("espBoxes",         espBoxes);
-            espHP            = j.value("espHP",            espHP);
-            espNames         = j.value("espNames",         espNames);
-            espWeapons       = j.value("espWeapons",       espWeapons);
-            autoDodge        = j.value("autoDodge",        autoDodge);
-            dodgeDelayMs     = j.value("dodgeDelayMs",     dodgeDelayMs);
-            dodgeGroundOnly  = j.value("dodgeGroundOnly",  dodgeGroundOnly);
-            dexBot           = j.value("dexBot",           dexBot);
-            comboDelayMs     = j.value("comboDelayMs",     comboDelayMs);
-            dexBotOnlyHit    = j.value("dexBotOnlyHit",   dexBotOnlyHit);
-            weaponSnap       = j.value("weaponSnap",       weaponSnap);
-            snapRangeUnits   = j.value("snapRangeUnits",   snapRangeUnits);
-            randomizeTimings = j.value("randomizeTimings", randomizeTimings);
-            timingVarianceMs = j.value("timingVarianceMs", timingVarianceMs);
-        } catch (...) { Save(path); }
+    static int Jitter(int base, int var) {
+        if (var <= 0) return base;
+        std::uniform_int_distribution<int> d(-var, var);
+        return std::max(0, base + d(rng));
+    }
+    static void PressKey(WORD vk, int holdMs = 50, int var = 8) {
+        INPUT i[2]{};
+        i[0].type = i[1].type = INPUT_KEYBOARD;
+        i[0].ki.wVk = i[1].ki.wVk = vk;
+        i[1].ki.dwFlags = KEYEVENTF_KEYUP;
+        SendInput(1, &i[0], sizeof(INPUT));
+        std::this_thread::sleep_for(std::chrono::milliseconds(Jitter(holdMs, var)));
+        SendInput(1, &i[1], sizeof(INPUT));
+    }
+    static void HoldKey(WORD vk) {
+        INPUT i{}; i.type = INPUT_KEYBOARD; i.ki.wVk = vk;
+        SendInput(1, &i, sizeof(INPUT));
+    }
+    static void ReleaseKey(WORD vk) {
+        INPUT i{}; i.type = INPUT_KEYBOARD;
+        i.ki.wVk = vk; i.ki.dwFlags = KEYEVENTF_KEYUP;
+        SendInput(1, &i, sizeof(INPUT));
     }
 
-    void Save(const std::string& path = "bhcheat_cfg.json") {
-        nlohmann::json j;
-        j["espEnabled"]       = espEnabled;
-        j["espBoxes"]         = espBoxes;
-        j["espHP"]            = espHP;
-        j["espNames"]         = espNames;
-        j["espWeapons"]       = espWeapons;
-        j["autoDodge"]        = autoDodge;
-        j["dodgeDelayMs"]     = dodgeDelayMs;
-        j["dodgeGroundOnly"]  = dodgeGroundOnly;
-        j["dexBot"]           = dexBot;
-        j["comboDelayMs"]     = comboDelayMs;
-        j["dexBotOnlyHit"]    = dexBotOnlyHit;
-        j["weaponSnap"]       = weaponSnap;
-        j["snapRangeUnits"]   = snapRangeUnits;
-        j["randomizeTimings"] = randomizeTimings;
-        j["timingVarianceMs"] = timingVarianceMs;
-        std::ofstream f(path);
-        f << j.dump(4);
-    }
-};
+    constexpr WORD KEY_DODGE  = 'X';
+    constexpr WORD KEY_JUMP   = 'W';
+    constexpr WORD KEY_ATTACK = 'A';
+    constexpr WORD KEY_SIG    = 'Z';
+    constexpr WORD KEY_LEFT   = VK_LEFT;
+    constexpr WORD KEY_RIGHT  = VK_RIGHT;
+    constexpr WORD KEY_DOWN   = VK_DOWN;
+    constexpr WORD KEY_UP     = VK_UP;
+}
