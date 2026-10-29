@@ -1,2 +1,31 @@
-cmake -B build -DCMAKE_BUILD_TYPE=Release
-cmake --build build --config Release
+cmake_minimum_required(VERSION 3.25)
+project(BHCheat LANGUAGES CXX)
+set(CMAKE_CXX_STANDARD 20)
+
+find_package(OpenSSL REQUIRED)
+
+set(IMGUI_DIR ${CMAKE_SOURCE_DIR}/vendor/imgui)
+
+add_library(imgui STATIC
+    ${IMGUI_DIR}/imgui.cpp
+    ${IMGUI_DIR}/imgui_draw.cpp
+    ${IMGUI_DIR}/imgui_tables.cpp
+    ${IMGUI_DIR}/imgui_widgets.cpp
+    ${IMGUI_DIR}/backends/imgui_impl_win32.cpp
+    ${IMGUI_DIR}/backends/imgui_impl_dx11.cpp
+)
+target_include_directories(imgui PUBLIC
+    ${IMGUI_DIR}
+    ${IMGUI_DIR}/backends
+)
+
+add_executable(BHCheat src/main.cpp)
+target_include_directories(BHCheat PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+    ${IMGUI_DIR}
+    ${IMGUI_DIR}/backends
+    ${CMAKE_SOURCE_DIR}/vendor/nlohmann
+)
+target_link_libraries(BHCheat PRIVATE imgui d3d11 dwmapi OpenSSL::Crypto)
+target_compile_options(BHCheat PRIVATE /W4 /permissive-)
+target_compile_definitions(BHCheat PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
