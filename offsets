@@ -1,85 +1,60 @@
-#include "hwid.hpp"
-#include "memory.hpp"
-#include "config.hpp"
-#include "entities.hpp"
-#include "input.hpp"
-#include "autododge.hpp"
-#include "dexbot.hpp"
-#include "weaponsnap.hpp"
-#include "renderer.hpp"
-#include <iostream>
-#include <thread>
-#include <atomic>
-#include <chrono>
+cmake_minimum_required(VERSION 3.20)
+project(bhcheat CXX)
 
-static std::atomic<bool> g_run{ true };
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-void HotKeyLoop(bool& menu) {
-    while (g_run) {
-        if (GetAsyncKeyState(VK_INSERT) & 1) menu = !menu;
-        if (GetAsyncKeyState(VK_END)    & 1) g_run = false;
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
-    }
-}
+# ── Sources projet ──────────────────────────────────────────────────────────
+file(GLOB_RECURSE BH_SOURCES
+    "${CMAKE_SOURCE_DIR}/src/*.cpp"
+    "${CMAKE_SOURCE_DIR}/src/*.hpp"
+)
 
-int main() {
-    SetConsoleTitleW(L"BH Cheat");
+# ── ImGui sources ────────────────────────────────────────────────────────────
+set(IMGUI_DIR "${CMAKE_SOURCE_DIR}/vendor/imgui")
 
-    std::string hwid = HWID::Generate();
-    std::cout << "HWID: " << hwid << "\n";
-    if (!HWID::IsAuthorized(hwid)) {
-        MessageBoxW(nullptr,
-            L"Licence invalide.",
-            L"BH Cheat", MB_ICONERROR);
-        return 1;
-    }
+set(IMGUI_SOURCES
+    "${IMGUI_DIR}/imgui.cpp"
+    "${IMGUI_DIR}/imgui_draw.cpp"
+    "${IMGUI_DIR}/imgui_tables.cpp"
+    "${IMGUI_DIR}/imgui_widgets.cpp"
+    "${IMGUI_DIR}/backends/imgui_impl_dx11.cpp"
+    "${IMGUI_DIR}/backends/imgui_impl_win32.cpp"
+)
 
-    Config cfg; cfg.Load();
+# ── Exécutable ───────────────────────────────────────────────────────────────
+add_executable(bhcheat ${BH_SOURCES} ${IMGUI_SOURCES})
 
-    Memory mem;
-    while (!mem.Attach(L"Brawlhalla.exe")) {
-        std::cout << "Attente Brawlhalla...\n";
-        std::this_thread::sleep_for(std::chrono::seconds(2));
-    }
-    std::cout << "Attache. monoBase=0x" << std::hex << mem.monoBase << "\n";
+# ── Includes ─────────────────────────────────────────────────────────────────
+target_include_directories(bhcheat PRIVATE
+    "${CMAKE_SOURCE_DIR}/src"
+    "${IMGUI_DIR}"
+    "${IMGUI_DIR}/backends"
+    "${CMAKE_SOURCE_DIR}/vendor/nlohmann"   # → #include <nlohmann/json.hpp>
+)
 
-    Scene      scene(mem);
-    AutoDodge  autoDodge(cfg);
-    DexBot     dexBot(cfg);
-    WeaponSnap weaponSnap(cfg);
-    Renderer   renderer;
+# ── Libs Windows ─────────────────────────────────────────────────────────────
+target_link_libraries(bhcheat PRIVATE
+    d3d11
+    d3dcompiler
+    dxgi
+    dwmapi
+    user32
+    gdi32
+)
 
-    if (!renderer.Init()) {
-        std::cerr << "Overlay impossible\n"; return 1;
-    }
-
-    bool menuOpen = true;
-    std::thread hotkeys(HotKeyLoop, std::ref(menuOpen));
-
-    // FILL: pointer scan CE pour ces 4 valeurs
-    uintptr_t localAddr = 0x0;
-    float camX=0.f, camY=0.f, zoom=6.f;
-
-    MSG msg{};
-    while (g_run) {
-        while (PeekMessageW(&msg,nullptr,0,0,PM_REMOVE)){
-            if (msg.message==WM_QUIT) g_run=false;
-            TranslateMessage(&msg); DispatchMessageW(&msg);
-        }
-        auto players = scene.GetPlayers(localAddr);
-        auto weapons = scene.GetGroundWeapons(
-            players.empty() ? Vec3{} : players[0].worldPos);
-
-        autoDodge .Tick(players);
-        dexBot    .Tick(players);
-        weaponSnap.Tick(players, weapons);
-
-        renderer.Frame(players, weapons, cfg, menuOpen, camX, camY, zoom);
-        std::this_thread::sleep_for(std::chrono::milliseconds(8));
-    }
-
-    hotkeys.join();
-    renderer.Shutdown();
-    cfg.Save();
-    return 0;
-}
+# ── Flags MSVC ───────────────────────────────────────────────────────────────
+if(MSVC)
+    target_compile_options(bhcheat PRIVATE
+        /W3
+        /O2
+        /EHsc
+        /MP
+    )
+    # Évite les warnings MSVC sur les fonctions C standard
+    target_compile_definitions(bhcheat PRIVATE
+        _CRT_SECURE_NO_WARNINGS
+        NOMINMAX
+        WIN32_LEAN_AND_MEAN
+    )
+endif()
