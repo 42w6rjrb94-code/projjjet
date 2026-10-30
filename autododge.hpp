@@ -12,8 +12,6 @@
 
 class AutoDodge {
     Config& cfg;
-
-    // Dernier état par index ennemi — détecte la transition Startup→Active
     std::unordered_map<size_t, AttackState> prevState;
 
     static WORD DodgeDir(const BHPlayer& local, const BHPlayer& enemy) {
@@ -36,31 +34,32 @@ public:
 
         for (size_t i = 1; i < players.size(); i++) {
             const BHPlayer& enemy = players[i];
-            AttackState prev = prevState[i]; // default-init à Idle=0
+            AttackState prev = prevState[i];
             AttackState curr = enemy.atkState;
 
             std::cout << "[DODGE] enemy[" << i << "] atk="
                       << (int)curr
                       << " dist=" << (int)enemy.distToLocal << "\n";
 
-            // Mise à jour état précédent avant les guards
             prevState[i] = curr;
 
             if (enemy.distToLocal > DODGE_RANGE) continue;
             if (cfg.dodgeGroundOnly && !local->isGrounded) continue;
 
-            // Trigger uniquement sur la transition vers Active (=2)
-            // Idle→Active   : attaque légère rapide → dodge immédiat
-            // Startup→Active: sig/heavy charge relâchée → dodge au bon moment
-            bool transition =
-                (curr == AttackState::Active) &&
-                (prev != AttackState::Active);
+            // Trigger sur Idle→non-Idle (onset unique de l'attaque)
+            // BH expose pas Startup/Active séparément sur cet offset
+            bool onset = (curr != AttackState::Idle) &&
+                         (prev == AttackState::Idle);
 
-            if (!transition) continue;
+            if (!onset) continue;
 
             std::cout << "[DODGE] TRIGGER — ennemi " << i
-                      << " passe Active a dist=" << (int)enemy.distToLocal << "\n";
+                      << " onset dist=" << (int)enemy.distToLocal << "\n";
 
+            // dodgeDelayMs dans le menu Config règle le timing :
+            // Légères  → 0–30ms
+            // Lourdes  → 80–120ms
+            // Sigs     → 250–350ms (couvre le startup de charge)
             int delay = Input::Jitter(cfg.dodgeDelayMs, cfg.timingVarianceMs);
             if (delay > 0)
                 std::this_thread::sleep_for(std::chrono::milliseconds(delay));
