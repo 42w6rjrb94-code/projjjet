@@ -14,10 +14,14 @@
 
 static std::atomic<bool> g_run{ true };
 
-void HotKeyLoop(bool& menu) {
+void HotKeyLoop(bool& menu, Renderer& rend) {
     while (g_run) {
-        if (GetAsyncKeyState(VK_INSERT) & 1) menu = !menu;
-        if (GetAsyncKeyState(VK_END)    & 1) g_run = false;
+        if (GetAsyncKeyState(VK_INSERT) & 1) {
+            menu = !menu;
+            rend.SetInteractive(menu);
+            Sleep(200);
+        }
+        if (GetAsyncKeyState(VK_END) & 1) g_run = false;
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
 }
@@ -44,7 +48,6 @@ int main() {
     std::cout << "Attache. gameBase=0x" << std::hex << mem.gameBase << "\n";
 
     Scene scene(mem);
-
     if (!scene.IsReady()) {
         std::cerr << "Code cave injection failed — AOB not found\n";
         return 1;
@@ -61,8 +64,10 @@ int main() {
         return 1;
     }
 
+    renderer.SetInteractive(true);
+
     bool menuOpen = true;
-    std::thread hotkeys(HotKeyLoop, std::ref(menuOpen));
+    std::thread hotkeys(HotKeyLoop, std::ref(menuOpen), std::ref(renderer));
 
     uintptr_t localAddr = 0;
     float camX = 0.f, camY = 0.f, zoom = 6.f;
@@ -79,7 +84,6 @@ int main() {
         auto weapons = scene.GetGroundWeapons(
             players.empty() ? Vec3{} : players[0].worldPos);
 
-        // Camera approximée depuis le midpoint des joueurs
         if (!players.empty()) {
             float sx = 0.f, sy = 0.f;
             for (auto& p : players) {
