@@ -7,13 +7,11 @@ import pymem.pattern
 
 def find_player_pattern():
     pm = pymem.Pymem("Brawlhalla.exe")
-    # AOB scan signature replacing manual pointer hunting
-    # FILL: replace pattern with current game version signature bytes
     signature = b"\x48\x8B\x05\x00\x00\x00\x00\x48\x85\xC0\x74\x0A"
-    mask = "xxx????xxxxx"
     
+    # pymem.pattern.pattern_scan_module takes 3 arguments: handle, signature, mask (or just handle and signature depending on version)
     address = pymem.pattern.pattern_scan_module(
-        pm.process_handle, pm.base_address, signature, mask
+        pm.process_handle, signature, return_multiple=False
     )
     if address:
         print(f"found base pattern at: hex({address})")
