@@ -11,11 +11,11 @@ public:
     HANDLE    handle   = NULL;
     DWORD     pID      = 0;
     uintptr_t gameBase = 0;
-    uintptr_t monoBase = 0; // Adobe AIR — pas de Mono, gardé pour compatibilité main.cpp
+    uintptr_t monoBase = 0;
 
     ~Memory() { if (handle) CloseHandle(handle); }
 
-    bool Attach(const wchar_t* /*procName*/) {
+    bool Attach(const wchar_t*) {
         HWND hwnd = FindWindowW(nullptr, L"Brawlhalla");
         if (!hwnd) return false;
         GetWindowThreadProcessId(hwnd, &pID);
@@ -34,9 +34,7 @@ public:
         MODULEENTRY32 me{ sizeof(me) };
         if (Module32First(snap, &me)) {
             do {
-                std::wstring wm(me.szModule);
-                std::string  sm(wm.begin(), wm.end());
-                if (!_stricmp(sm.c_str(), modName)) {
+                if (!_stricmp(me.szModule, modName)) {
                     CloseHandle(snap);
                     return (uintptr_t)me.modBaseAddr;
                 }
@@ -63,16 +61,15 @@ public:
             bytes.data(), bytes.size(), NULL);
     }
 
-    // Adobe AIR string — offset 0x14 = char data (expérimental, FILL si noms faux)
     std::string ReadMonoStr(uintptr_t addr) {
         if (!addr) return "?";
         char buf[128]{};
-        ReadProcessMemory(handle, (LPCVOID)(addr + 0x14), buf, 127, nullptr);
+        ReadProcessMemory(handle, (LPCVOID)(addr + 0x14),
+            buf, 127, nullptr);
         buf[127] = '\0';
         return std::string(buf);
     }
 
-    // AOB scan sur toutes les régions exécutables du process
     uintptr_t FindPatternSafe(const char* pattern, const char* mask) {
         SYSTEM_INFO si; GetSystemInfo(&si);
         uintptr_t cur  = (uintptr_t)si.lpMinimumApplicationAddress;
@@ -107,7 +104,6 @@ public:
         return 0;
     }
 
-    // Alloue une page exécutable dans la plage jmp rel32 (+/-2GB)
     uintptr_t AllocNear(uintptr_t target, size_t size = 0x1000) {
         for (uintptr_t i = target - 0x70000000;
              i < target + 0x70000000; i += 0x10000) {
