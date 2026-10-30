@@ -38,9 +38,11 @@ public:
         if (!target) return false;
         RECT r; GetClientRect(target, &r);
         W=r.right; H=r.bottom;
+        if (W<=0) W=1920;
+        if (H<=0) H=1080;
 
         WNDCLASSEXW wc{sizeof(wc)};
-        wc.lpfnWndProc   = OverlayWndProc;  // ← WndProc réel
+        wc.lpfnWndProc   = OverlayWndProc;
         wc.hInstance     = GetModuleHandleW(nullptr);
         wc.lpszClassName = L"BHOvr";
         RegisterClassExW(&wc);
@@ -100,116 +102,76 @@ public:
         }
     }
 
-    bool W2S(float wx,float wy,float camX,float camY,float zoom,ImVec2& out){
-        float sx=(wx-camX)*zoom+W*0.5f;
-        float sy=H*0.5f-(wy-camY)*zoom;
-        if(sx<0||sx>W||sy<0||sy>H) return false;
-        out={sx,sy}; return true;
+    // Coordonnées monde Brawlhalla → pixel écran
+    // Les coords monde sont ~0-3000 en X, ~0-2500 en Y
+    // On mappe sur la taille de la fenêtre de jeu
+    bool W2S(float wx, float wy,
+             float camX, float camY, float zoom,
+             ImVec2& out) {
+        float sx = (wx - camX) * zoom + W * 0.5f;
+        float sy = H * 0.5f - (wy - camY) * zoom;
+        if (sx < -200.f || sx > W+200.f) return false;
+        if (sy < -200.f || sy > H+200.f) return false;
+        out = {sx, sy};
+        return true;
     }
 
     void Frame(const std::vector<BHPlayer>& players,
                const std::vector<BHWeapon>& weapons,
                Config& cfg, bool& menuOpen,
-               float camX,float camY,float zoom){
-        if(target){
-            RECT r; GetWindowRect(target,&r);
-            SetWindowPos(overlay,HWND_TOPMOST,r.left,r.top,
-                r.right-r.left,r.bottom-r.top,SWP_NOACTIVATE);
-        }
-        float cl[4]{}; ctx->OMSetRenderTargets(1,&rtv,nullptr);
-        ctx->ClearRenderTargetView(rtv,cl);
-        ImGui_ImplDX11_NewFrame(); ImGui_ImplWin32_NewFrame(); ImGui::NewFrame();
-        auto* dl=ImGui::GetBackgroundDrawList();
+               float camX, float camY, float zoom) {
 
-        if(cfg.espEnabled){
-            for(const auto& p:players){
-                if(p.isLocal) continue;
+        // Suivre la fenêtre Brawlhalla
+        if (target) {
+            RECT r; GetWindowRect(target, &r);
+            SetWindowPos(overlay, HWND_TOPMOST,
+                r.left, r.top,
+                r.right-r.left, r.bottom-r.top,
+                SWP_NOACTIVATE);
+        }
+
+        float cl[4]{};
+        ctx->OMSetRenderTargets(1, &rtv, nullptr);
+        ctx->ClearRenderTargetView(rtv, cl);
+        ImGui_ImplDX11_NewFrame();
+        ImGui_ImplWin32_NewFrame();
+        ImGui::NewFrame();
+        auto* dl = ImGui::GetBackgroundDrawList();
+
+        if (cfg.espEnabled) {
+            for (size_t i = 0; i < players.size(); i++) {
+                const auto& p = players[i];
+                if (p.isLocal) continue;
+
                 ImVec2 s;
-                if(!W2S(p.worldPos.x,p.worldPos.y,camX,camY,zoom,s)) continue;
-                ImU32 col=p.teamID==0
-                    ?IM_COL32(255,80,80,255):IM_COL32(80,255,80,255);
-                float hw=30.f*zoom,hh=50.f*zoom;
-                if(cfg.espBoxes)
-                    dl->AddRect({s.x-hw,s.y-hh},{s.x+hw,s.y+hh},col,0,0,2.f);
-                if(cfg.espHP&&p.maxHp>0){
-                    float ratio=p.hp/p.maxHp;
-                    dl->AddRectFilled({s.x-hw-7,s.y+hh},{s.x-hw-3,s.y-hh},
+                if (!W2S(p.worldPos.x, p.worldPos.y,
+                         camX, camY, zoom, s)) continue;
+
+                // Rouge pour ennemis, vert pour alliés
+                ImU32 col = IM_COL32(255, 80, 80, 255);
+
+                float hw = 20.f, hh = 35.f;
+
+                if (cfg.espBoxes)
+                    dl->AddRect(
+                        {s.x-hw, s.y-hh},
+                        {s.x+hw, s.y+hh},
+                        col, 0, 0, 2.f);
+
+                if (cfg.espHP && p.maxHp > 0) {
+                    float ratio = p.hp / p.maxHp;
+                    dl->AddRectFilled(
+                        {s.x-hw-7, s.y+hh},
+                        {s.x-hw-3, s.y-hh},
                         IM_COL32(40,40,40,180));
-                    dl->AddRectFilled({s.x-hw-7,s.y+hh},
-                        {s.x-hw-3,s.y+hh-hh*2*ratio},
-                        IM_COL32(int(255*(1-ratio)),int(255*ratio),0,255));
+                    dl->AddRectFilled(
+                        {s.x-hw-7, s.y+hh},
+                        {s.x-hw-3, s.y+hh - hh*2*ratio},
+                        IM_COL32(
+                            (int)(255*(1-ratio)),
+                            (int)(255*ratio), 0, 255));
                 }
-                if(cfg.espNames){
+
+                if (cfg.espNames) {
                     char lbl[128];
-                    snprintf(lbl,sizeof(lbl),"%s [%.0f/%.0f]",
-                        p.name.c_str(),p.hp,p.maxHp);
-                    dl->AddText({s.x-hw,s.y-hh-16},col,lbl);
-                }
-            }
-            for(const auto& w:weapons){
-                if(!cfg.espWeapons) break;
-                ImVec2 s;
-                if(!W2S(w.pos.x,w.pos.y,camX,camY,zoom,s)) continue;
-                dl->AddCircle(s,8.f,IM_COL32(255,220,0,255),12,2.f);
-            }
-        }
-
-        if(menuOpen){
-            ImGui::SetNextWindowSize({320,340},ImGuiCond_Once);
-            ImGui::SetNextWindowPos({30,30},ImGuiCond_Once);
-            ImGui::Begin("  BH Cheat  v1.0",&menuOpen,ImGuiWindowFlags_NoResize);
-            if(ImGui::BeginTabBar("tabs")){
-                if(ImGui::BeginTabItem("ESP")){
-                    ImGui::Checkbox("ESP actif",   &cfg.espEnabled);
-                    ImGui::Checkbox("Boxes",        &cfg.espBoxes);
-                    ImGui::Checkbox("HP bar",       &cfg.espHP);
-                    ImGui::Checkbox("Noms",         &cfg.espNames);
-                    ImGui::Checkbox("Armes au sol", &cfg.espWeapons);
-                    ImGui::EndTabItem();
-                }
-                if(ImGui::BeginTabItem("Auto Dodge")){
-                    ImGui::Checkbox("Auto Dodge",   &cfg.autoDodge);
-                    ImGui::Checkbox("Ground only",  &cfg.dodgeGroundOnly);
-                    ImGui::SliderInt("Délai (ms)",  &cfg.dodgeDelayMs,0,150);
-                    ImGui::EndTabItem();
-                }
-                if(ImGui::BeginTabItem("DexBot")){
-                    ImGui::Checkbox("DexBot",           &cfg.dexBot);
-                    ImGui::Checkbox("Sur hitstun seul", &cfg.dexBotOnlyHit);
-                    ImGui::SliderInt("Inter-input (ms)",&cfg.comboDelayMs,16,200);
-                    ImGui::EndTabItem();
-                }
-                if(ImGui::BeginTabItem("Weapon")){
-                    ImGui::Checkbox("Weapon Snap",     &cfg.weaponSnap);
-                    ImGui::SliderFloat("Range",        &cfg.snapRangeUnits,50,800);
-                    ImGui::EndTabItem();
-                }
-                if(ImGui::BeginTabItem("Config")){
-                    ImGui::Checkbox("Timings aléatoires",&cfg.randomizeTimings);
-                    ImGui::SliderInt("Variance (ms)",    &cfg.timingVarianceMs,0,30);
-                    ImGui::Separator();
-                    if(ImGui::Button("Sauvegarder")) cfg.Save();
-                    ImGui::SameLine();
-                    if(ImGui::Button("Charger"))     cfg.Load();
-                    ImGui::Separator();
-                    ImGui::TextDisabled("INSERT = menu  |  END = quitter");
-                    ImGui::EndTabItem();
-                }
-                ImGui::EndTabBar();
-            }
-            ImGui::End();
-        }
-
-        ImGui::Render();
-        ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
-        sc->Present(0,0);
-    }
-
-    void Shutdown(){
-        ImGui_ImplDX11_Shutdown(); ImGui_ImplWin32_Shutdown();
-        ImGui::DestroyContext();
-        if(rtv) rtv->Release(); if(sc) sc->Release();
-        if(ctx) ctx->Release(); if(dev) dev->Release();
-        if(overlay) DestroyWindow(overlay);
-    }
-};
+                    snprintf(lbl, sizeof(lbl), "%s [%.0f/%.0f]",
