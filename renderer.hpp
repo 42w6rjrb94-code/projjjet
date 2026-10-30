@@ -175,3 +175,89 @@ public:
                 if (cfg.espNames) {
                     char lbl[128];
                     snprintf(lbl, sizeof(lbl), "%s [%.0f/%.0f]",
+                        p.name.c_str(), p.hp, p.maxHp);
+                    dl->AddText({s.x-hw, s.y-hh-16}, col, lbl);
+                }
+
+                // Point de position brut (toujours visible pour debug)
+                dl->AddCircleFilled(s, 4.f, col);
+            }
+
+            for (const auto& w : weapons) {
+                if (!cfg.espWeapons) break;
+                ImVec2 s;
+                if (!W2S(w.pos.x, w.pos.y, camX, camY, zoom, s)) continue;
+                dl->AddCircle(s, 8.f, IM_COL32(255,220,0,255), 12, 2.f);
+            }
+        }
+
+        if (menuOpen) {
+            ImGui::SetNextWindowSize({320,340}, ImGuiCond_Once);
+            ImGui::SetNextWindowPos({30,30},    ImGuiCond_Once);
+            ImGui::Begin("  BH Cheat  v1.0", &menuOpen,
+                         ImGuiWindowFlags_NoResize);
+            if (ImGui::BeginTabBar("tabs")) {
+                if (ImGui::BeginTabItem("ESP")) {
+                    ImGui::Checkbox("ESP actif",    &cfg.espEnabled);
+                    ImGui::Checkbox("Boxes",         &cfg.espBoxes);
+                    ImGui::Checkbox("HP bar",        &cfg.espHP);
+                    ImGui::Checkbox("Noms",          &cfg.espNames);
+                    ImGui::Checkbox("Armes au sol",  &cfg.espWeapons);
+                    ImGui::Separator();
+                    ImGui::Text("players lus: %d", (int)players.size());
+                    if (!players.empty()) {
+                        ImGui::Text("pos[0]: %.0f / %.0f",
+                            players[0].worldPos.x,
+                            players[0].worldPos.y);
+                    }
+                    ImGui::EndTabItem();
+                }
+                if (ImGui::BeginTabItem("Auto Dodge")) {
+                    ImGui::Checkbox("Auto Dodge",  &cfg.autoDodge);
+                    ImGui::Checkbox("Ground only", &cfg.dodgeGroundOnly);
+                    ImGui::SliderInt("Délai (ms)", &cfg.dodgeDelayMs, 0, 150);
+                    ImGui::EndTabItem();
+                }
+                if (ImGui::BeginTabItem("DexBot")) {
+                    ImGui::Checkbox("DexBot",           &cfg.dexBot);
+                    ImGui::Checkbox("Sur hitstun seul", &cfg.dexBotOnlyHit);
+                    ImGui::SliderInt("Inter-input (ms)",&cfg.comboDelayMs,16,200);
+                    ImGui::EndTabItem();
+                }
+                if (ImGui::BeginTabItem("Weapon")) {
+                    ImGui::Checkbox("Weapon Snap",    &cfg.weaponSnap);
+                    ImGui::SliderFloat("Range",       &cfg.snapRangeUnits,50,800);
+                    ImGui::EndTabItem();
+                }
+                if (ImGui::BeginTabItem("Config")) {
+                    ImGui::Checkbox("Timings aléatoires", &cfg.randomizeTimings);
+                    ImGui::SliderInt("Variance (ms)",     &cfg.timingVarianceMs,0,30);
+                    ImGui::Separator();
+                    if (ImGui::Button("Sauvegarder")) cfg.Save();
+                    ImGui::SameLine();
+                    if (ImGui::Button("Charger"))     cfg.Load();
+                    ImGui::Separator();
+                    ImGui::TextDisabled("INSERT = menu  |  END = quitter");
+                    ImGui::EndTabItem();
+                }
+                ImGui::EndTabBar();
+            }
+            ImGui::End();
+        }
+
+        ImGui::Render();
+        ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
+        sc->Present(0, 0);
+    }
+
+    void Shutdown() {
+        ImGui_ImplDX11_Shutdown();
+        ImGui_ImplWin32_Shutdown();
+        ImGui::DestroyContext();
+        if (rtv) rtv->Release();
+        if (sc)  sc->Release();
+        if (ctx) ctx->Release();
+        if (dev) dev->Release();
+        if (overlay) DestroyWindow(overlay);
+    }
+};
