@@ -33,7 +33,8 @@ public:
         RegisterClassExW(&wc);
         overlay=CreateWindowExW(
             WS_EX_TOPMOST|WS_EX_LAYERED|WS_EX_TRANSPARENT|WS_EX_NOACTIVATE,
-            L"BHOvr",L"",WS_POPUP,0,0,W,H,nullptr,nullptr,wc.hInstance,nullptr);
+            L"BHOvr",L"",WS_POPUP,0,0,W,H,
+            nullptr,nullptr,wc.hInstance,nullptr);
         if (!overlay) return false;
         SetLayeredWindowAttributes(overlay,RGB(0,0,0),0,LWA_COLORKEY);
         MARGINS m{-1}; DwmExtendFrameIntoClientArea(overlay,&m);
@@ -68,6 +69,21 @@ public:
         ImGui_ImplWin32_Init(overlay);
         ImGui_ImplDX11_Init(dev,ctx);
         return true;
+    }
+
+    void SetInteractive(bool interactive) {
+        if (!overlay) return;
+        LONG_PTR style = GetWindowLongPtrW(overlay, GWL_EXSTYLE);
+        if (interactive) {
+            style &= ~WS_EX_TRANSPARENT;
+            style &= ~WS_EX_NOACTIVATE;
+            SetWindowLongPtrW(overlay, GWL_EXSTYLE, style);
+            SetForegroundWindow(overlay);
+        } else {
+            style |= WS_EX_TRANSPARENT;
+            style |= WS_EX_NOACTIVATE;
+            SetWindowLongPtrW(overlay, GWL_EXSTYLE, style);
+        }
     }
 
     bool W2S(float wx,float wy,float camX,float camY,float zoom,ImVec2& out){
