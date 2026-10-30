@@ -11,6 +11,19 @@
 #pragma comment(lib, "d3d11.lib")
 #pragma comment(lib, "dwmapi.lib")
 
+extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(
+    HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
+
+static LRESULT WINAPI OverlayWndProc(HWND hWnd, UINT msg,
+                                      WPARAM wParam, LPARAM lParam) {
+    if (ImGui_ImplWin32_WndProcHandler(hWnd, msg, wParam, lParam))
+        return true;
+    switch (msg) {
+        case WM_DESTROY: PostQuitMessage(0); return 0;
+    }
+    return DefWindowProcW(hWnd, msg, wParam, lParam);
+}
+
 class Renderer {
 public:
     HWND overlay=nullptr, target=nullptr;
@@ -27,10 +40,11 @@ public:
         W=r.right; H=r.bottom;
 
         WNDCLASSEXW wc{sizeof(wc)};
-        wc.lpfnWndProc=DefWindowProcW;
-        wc.hInstance=GetModuleHandleW(nullptr);
-        wc.lpszClassName=L"BHOvr";
+        wc.lpfnWndProc   = OverlayWndProc;  // ← WndProc réel
+        wc.hInstance     = GetModuleHandleW(nullptr);
+        wc.lpszClassName = L"BHOvr";
         RegisterClassExW(&wc);
+
         overlay=CreateWindowExW(
             WS_EX_TOPMOST|WS_EX_LAYERED|WS_EX_TRANSPARENT|WS_EX_NOACTIVATE,
             L"BHOvr",L"",WS_POPUP,0,0,W,H,
@@ -58,14 +72,14 @@ public:
         auto& s=ImGui::GetStyle();
         s.WindowRounding=6.f; s.FrameRounding=4.f;
         auto* c=s.Colors;
-        c[ImGuiCol_WindowBg]      ={0.07f,0.07f,0.09f,0.95f};
-        c[ImGuiCol_TitleBgActive] ={0.18f,0.08f,0.38f,1.f};
-        c[ImGuiCol_CheckMark]     ={0.6f,0.2f,1.0f,1.f};
-        c[ImGuiCol_SliderGrab]    ={0.6f,0.2f,1.0f,1.f};
-        c[ImGuiCol_Button]        ={0.18f,0.08f,0.38f,1.f};
-        c[ImGuiCol_ButtonHovered] ={0.28f,0.12f,0.55f,1.f};
-        c[ImGuiCol_Tab]           ={0.12f,0.05f,0.25f,1.f};
-        c[ImGuiCol_TabActive]     ={0.28f,0.12f,0.55f,1.f};
+        c[ImGuiCol_WindowBg]       ={0.07f,0.07f,0.09f,0.95f};
+        c[ImGuiCol_TitleBgActive]  ={0.18f,0.08f,0.38f,1.f};
+        c[ImGuiCol_CheckMark]      ={0.6f,0.2f,1.0f,1.f};
+        c[ImGuiCol_SliderGrab]     ={0.6f,0.2f,1.0f,1.f};
+        c[ImGuiCol_Button]         ={0.18f,0.08f,0.38f,1.f};
+        c[ImGuiCol_ButtonHovered]  ={0.28f,0.12f,0.55f,1.f};
+        c[ImGuiCol_Tab]            ={0.12f,0.05f,0.25f,1.f};
+        c[ImGuiCol_TabSelected]    ={0.28f,0.12f,0.55f,1.f};
         ImGui_ImplWin32_Init(overlay);
         ImGui_ImplDX11_Init(dev,ctx);
         return true;
