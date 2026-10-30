@@ -73,6 +73,8 @@ int main() {
     float camX = 0.f, camY = 0.f, zoom = 6.f;
 
     MSG msg{};
+    int debugTick = 0;
+
     while (g_run) {
         while (PeekMessageW(&msg, nullptr, 0, 0, PM_REMOVE)) {
             if (msg.message == WM_QUIT) g_run = false;
@@ -83,6 +85,18 @@ int main() {
         auto players = scene.GetPlayers(localAddr);
         auto weapons = scene.GetGroundWeapons(
             players.empty() ? Vec3{} : players[0].worldPos);
+
+        // Debug toutes les 60 frames (~0.5 sec)
+        if (++debugTick % 60 == 0) {
+            std::cout << "players=" << std::dec << players.size();
+            for (auto& p : players) {
+                std::cout << " | dp=0x" << std::hex << p.addr
+                          << " x=" << std::dec << (int)p.worldPos.x
+                          << " y=" << (int)p.worldPos.y
+                          << " atk=" << (int)p.atkState;
+            }
+            std::cout << "\n";
+        }
 
         if (!players.empty()) {
             float sx = 0.f, sy = 0.f;
