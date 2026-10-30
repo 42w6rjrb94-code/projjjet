@@ -1,3 +1,4 @@
+// autododge.hpp — C++17, Windows, external
 #pragma once
 #include "entities.hpp"
 #include "input.hpp"
@@ -10,6 +11,7 @@
 
 class AutoDodge {
     Config& cfg;
+    bool    lastAtkActive = false; // edge-trigger — dodge une fois par attaque
 
     static WORD DodgeDir(const BHPlayer& local, const BHPlayer& enemy) {
         float dx = enemy.worldPos.x - local.worldPos.x;
@@ -25,24 +27,30 @@ public:
         if (!cfg.autoDodge) return;
         if (players.size() < 2) return;
 
-        // Cherche le local — celui dont atk change le moins
-        // Provisoire : prend le joueur avec la plus petite distToLocal=0
-        // (distToLocal est calculée depuis players[0] dans entities.hpp)
-        // → on prend players[0] comme local ET on teste tous les autres
-        // → si autododge se déclenche sur le mauvais perso, on inversera
-
         const BHPlayer* local = &players[0];
+
+        bool anyAtkNow = false;
 
         for (size_t i = 1; i < players.size(); i++) {
             const BHPlayer& enemy = players[i];
 
-            // Log pour debug
+            // Seuil en world units — BH map ~10000 de large
+            // Portée d'attaque typique ~800–2500 units
+            constexpr float DODGE_RANGE = 3000.f;
+
             std::cout << "[DODGE] enemy[" << i << "] atk="
                       << (int)enemy.atkState
                       << " dist=" << (int)enemy.distToLocal << "\n";
 
             if ((int)enemy.atkState == 0) continue;
-            if (enemy.distToLocal > 600.f) continue;
+            if (enemy.distToLocal > DODGE_RANGE) continue;
+            if (cfg.dodgeGroundOnly && !local->isGrounded) continue;
+
+            anyAtkNow = true;
+
+            // Edge-trigger : fire une seule fois à l'onset de l'attaque
+            // pas à chaque frame pendant toute la durée
+            if (lastAtkActive) break;
 
             std::cout << "[DODGE] TRIGGER — ennemi " << i
                       << " attaque a dist=" << (int)enemy.distToLocal << "\n";
@@ -58,5 +66,7 @@ public:
             Input::ReleaseKey(dir);
             break;
         }
+
+        lastAtkActive = anyAtkNow;
     }
 };
