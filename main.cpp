@@ -41,34 +41,54 @@ int main() {
         std::cout << "Attente Brawlhalla...\n";
         std::this_thread::sleep_for(std::chrono::seconds(2));
     }
-    std::cout << "Attache. monoBase=0x" << std::hex << mem.monoBase << "\n";
+    std::cout << "Attache. gameBase=0x" << std::hex << mem.gameBase << "\n";
 
-    Scene      scene(mem);
+    Scene scene(mem);
+
+    if (!scene.IsReady()) {
+        std::cerr << "Code cave injection failed — AOB not found\n";
+        return 1;
+    }
+    std::cout << "Code cave OK\n";
+
     AutoDodge  autoDodge(cfg);
     DexBot     dexBot(cfg);
     WeaponSnap weaponSnap(cfg);
     Renderer   renderer;
 
     if (!renderer.Init()) {
-        std::cerr << "Overlay impossible\n"; return 1;
+        std::cerr << "Overlay impossible\n";
+        return 1;
     }
 
     bool menuOpen = true;
     std::thread hotkeys(HotKeyLoop, std::ref(menuOpen));
 
-    // FILL: pointer scan CE pour ces 4 valeurs
-    uintptr_t localAddr = 0x0;
-    float camX=0.f, camY=0.f, zoom=6.f;
+    uintptr_t localAddr = 0;
+    float camX = 0.f, camY = 0.f, zoom = 6.f;
 
     MSG msg{};
     while (g_run) {
-        while (PeekMessageW(&msg,nullptr,0,0,PM_REMOVE)){
-            if (msg.message==WM_QUIT) g_run=false;
-            TranslateMessage(&msg); DispatchMessageW(&msg);
+        while (PeekMessageW(&msg, nullptr, 0, 0, PM_REMOVE)) {
+            if (msg.message == WM_QUIT) g_run = false;
+            TranslateMessage(&msg);
+            DispatchMessageW(&msg);
         }
+
         auto players = scene.GetPlayers(localAddr);
         auto weapons = scene.GetGroundWeapons(
             players.empty() ? Vec3{} : players[0].worldPos);
+
+        // Camera approximée depuis le midpoint des joueurs
+        if (!players.empty()) {
+            float sx = 0.f, sy = 0.f;
+            for (auto& p : players) {
+                sx += p.worldPos.x;
+                sy += p.worldPos.y;
+            }
+            camX = sx / (float)players.size();
+            camY = sy / (float)players.size();
+        }
 
         autoDodge .Tick(players);
         dexBot    .Tick(players);
