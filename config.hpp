@@ -1,36 +1,32 @@
-// config.hpp — champs ajoutés pour rendre les ranges et W2S tunables live
+// config.hpp
 #pragma once
 #include <nlohmann/json.hpp>
 #include <fstream>
 #include <string>
 
 struct Config {
-    // ESP
-    bool  espEnabled      = true;
-    bool  espBoxes        = true;
-    bool  espHP           = true;
-    bool  espNames        = true;
-    bool  espWeapons      = true;
-    bool  espAtkState     = true;
-    // W2S calibration — tuner via sliders jusqu'à ce que les boxes collent
-    float w2sOffsetX      = 0.f;    // correction pixels X si box décalée
-    float w2sOffsetY      = 0.f;    // correction pixels Y
-    bool  w2sFlipY        = false;  // toggle si boxes sont inversées verticalement
-    // AutoDodge
-    bool  autoDodge       = true;
-    int   dodgeDelayMs    = 0;
-    bool  dodgeGroundOnly = false;
-    // DexBot
-    bool  dexBot          = true;
-    int   comboDelayMs    = 0;
-    bool  dexBotOnlyHit   = false;   // false = agressif (Idle + Recovery)
-    bool  dexBotNoActive  = true;    // ne pas attaquer quand ennemi en Active (hitbox ouverte)
-    float attackRange     = 270.f;   // slider 50-3000 — unités inconnues, tuner live
-    float chaseRange      = 2000.f;  // slider 100-8000
-    // WeaponSnap
-    bool  weaponSnap      = true;
-    float snapRangeUnits  = 400.f;
-    // Timings
+    bool  espEnabled       = true;
+    bool  espBoxes         = true;
+    bool  espHP            = true;
+    bool  espNames         = true;
+    bool  espWeapons       = true;
+    bool  espAtkState      = true;
+    float w2sOffsetX       = 0.f;
+    float w2sOffsetY       = 0.f;
+    bool  w2sFlipY         = false;
+    bool  autoDodge        = true;
+    float dodgeRange       = 510.f;   // ← NEW : slider AutoDodge
+    int   dodgeDelayMs     = 0;
+    bool  dodgeGroundOnly  = false;
+    bool  dexBot           = true;
+    int   comboDelayMs     = 0;
+    bool  dexBotOnlyHit    = false;
+    bool  dexBotNoActive   = true;
+    bool  dexBotSwapLocal  = false;   // ← NEW : inverse local/ennemi si chase part à l'envers
+    float attackRange      = 270.f;
+    float chaseRange       = 2000.f;
+    bool  weaponSnap       = true;
+    float snapRangeUnits   = 800.f;
     bool  randomizeTimings = true;
     int   timingVarianceMs = 4;
 
@@ -49,12 +45,14 @@ struct Config {
             w2sOffsetY      = j.value("w2sOffsetY",      w2sOffsetY);
             w2sFlipY        = j.value("w2sFlipY",        w2sFlipY);
             autoDodge       = j.value("autoDodge",       autoDodge);
+            dodgeRange      = j.value("dodgeRange",      dodgeRange);
             dodgeDelayMs    = j.value("dodgeDelayMs",    dodgeDelayMs);
             dodgeGroundOnly = j.value("dodgeGroundOnly", dodgeGroundOnly);
             dexBot          = j.value("dexBot",          dexBot);
             comboDelayMs    = j.value("comboDelayMs",    comboDelayMs);
             dexBotOnlyHit   = j.value("dexBotOnlyHit",  dexBotOnlyHit);
             dexBotNoActive  = j.value("dexBotNoActive",  dexBotNoActive);
+            dexBotSwapLocal = j.value("dexBotSwapLocal", dexBotSwapLocal);
             attackRange     = j.value("attackRange",     attackRange);
             chaseRange      = j.value("chaseRange",      chaseRange);
             weaponSnap      = j.value("weaponSnap",      weaponSnap);
@@ -76,12 +74,14 @@ struct Config {
         j["w2sOffsetY"]      = w2sOffsetY;
         j["w2sFlipY"]        = w2sFlipY;
         j["autoDodge"]       = autoDodge;
+        j["dodgeRange"]      = dodgeRange;
         j["dodgeDelayMs"]    = dodgeDelayMs;
         j["dodgeGroundOnly"] = dodgeGroundOnly;
         j["dexBot"]          = dexBot;
         j["comboDelayMs"]    = comboDelayMs;
         j["dexBotOnlyHit"]   = dexBotOnlyHit;
         j["dexBotNoActive"]  = dexBotNoActive;
+        j["dexBotSwapLocal"] = dexBotSwapLocal;
         j["attackRange"]     = attackRange;
         j["chaseRange"]      = chaseRange;
         j["weaponSnap"]      = weaponSnap;
