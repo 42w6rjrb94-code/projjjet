@@ -1,4 +1,5 @@
-// dexbot.hpp — chase fix : dist inline + periodic re-send + swap toggle
+// dexbot.hpp — C++17, Windows, external
+// Chase overhaul : 3 zones + hysterèse + no oscillation
 #pragma once
 #include "entities.hpp"
 #include "input.hpp"
@@ -16,9 +17,66 @@ class DexBot {
     AttackState       prevEnemyAtk = AttackState::Idle;
     std::atomic<bool> attacking{false};
     WORD              lastMoveDir  = 0;
-    uint64_t          lastHoldTick = 0;   // periodic re-send chase key
+    uint64_t          lastHoldTick = 0;
     int               cachedLocalIdx = -1;
     int               cachedEnemyIdx = -1;
+
+    // Hysterèse : deux seuils par zone pour éviter l'oscillation
+    // CHASE  : entre chaseRange et engageRange
+    // ENGAGE : entre engageRange et attackRange  → marche lentement / stop
+    // ATTACK : sous attackRange                  → attaque, plus de mouvement
+    // On entre dans une zone quand on croise le seuil OUTER
+    // On en sort seulement quand on croise le seuil INNER (plus petit)
+    // → le bot ne peut pas osciller entre deux zones
+
+    enum class Zone { Far, Chase, Engage, Attack };
+    Zone currentZone = Zone::Far;
+
+    Zone ComputeZone(float dist) {
+        float chaseOuter  = cfg.chaseRange;
+        float chaseInner  = cfg.chaseRange  * 0.85f;
+        float engageOuter = cfg.attackRange * 2.2f;   // engage = 2.2x attack range
+        float engageInner = cfg.attackRange * 1.8f;
+        float attackOuter = cfg.attackRange;
+        float attackInner = cfg.attackRange * 0.75f;
+
+        // Transitions basées sur la zone actuelle + hysterèse
+        switch (currentZone) {
+            case Zone::Far:
+                if (dist < chaseOuter)  return Zone::Chase;
+                return Zone::Far;
+            case Zone::Chase:
+                if (dist > chaseOuter)  return Zone::Far;
+                if (dist < engageOuter) return Zone::Engage;
+                return Zone::Chase;
+            case Zone::Engage:
+                if (dist > chaseInner)  return Zone::Chase;
+                if (dist < attackOuter) return Zone::Attack;
+                return Zone::Engage;
+            case Zone::Attack:
+                if (dist > engageInner) return Zone::Engage;
+                return Zone::Attack;
+        }
+        return Zone::Far;
+    }
+
+    void SetMoveDir(WORD want) {
+        if (want == 0) {
+            if (lastMoveDir) { Input::ReleaseKey(lastMoveDir); lastMoveDir = 0; lastHoldTick = 0; }
+            return;
+        }
+        uint64_t now = GetTickCount64();
+        bool needResend = (lastMoveDir != want) || (now - lastHoldTick > 120);
+        if (needResend) {
+            if (lastMoveDir && lastMoveDir != want)
+                Input::ReleaseKey(lastMoveDir);
+            Input::HoldKey(want);
+            lastMoveDir  = want;
+            lastHoldTick = now;
+        }
+    }
+
+    void StopMove() { SetMoveDir(0); }
 
     void FireAttack(WORD faceDir, int delayMs) {
         if (attacking.exchange(true)) return;
@@ -53,10 +111,9 @@ class DexBot {
         if (li < 0) li = 0;
         if (ei < 0) ei = (li == 0) ? 1 : 0;
         if (li == ei) ei = 1 - li;
-
         cachedLocalIdx = li;
         cachedEnemyIdx = ei;
-        std::cout << "[DEXBOT] local=players[" << li << "] enemy=players[" << ei << "]\n";
+        std::cout << "[DEXBOT] local=[" << li << "] enemy=[" << ei << "]\n";
     }
 
 public:
@@ -69,53 +126,64 @@ public:
         ResolveIndices(players);
         if (cachedLocalIdx < 0 || cachedEnemyIdx < 0) return;
 
-        int li = cachedLocalIdx;
-        int ei = cachedEnemyIdx;
+        const BHPlayer& local = players[cachedLocalIdx];
+        const BHPlayer& enemy = players[cachedEnemyIdx];
 
-        // Swap si le chase part à l'envers — toggle dans menu DexBot
-        if (cfg.dexBotSwapLocal) std::swap(li, ei);
-
-        const BHPlayer& local = players[li];
-        const BHPlayer& enemy = players[ei];
-
-        // ── Dist inline — jamais basé sur distToLocal ────────────────────
-        // distToLocal peut être 0 si local/enemy indices sont inversés dans entities
         float dx   = enemy.worldPos.x - local.worldPos.x;
         float dy   = enemy.worldPos.y - local.worldPos.y;
         float dist = sqrtf(dx*dx + dy*dy);
+        WORD  toward = dx > 0 ? Input::KEY_RIGHT : Input::KEY_LEFT;
 
-        // ── CHASE ────────────────────────────────────────────────────────
-        // Re-send HoldKey toutes les 150ms même si direction inchangée
-        // AIR game peut drop des keydown event si pas rafraîchi
-        if (dist > cfg.attackRange && dist < cfg.chaseRange) {
-            WORD want = dx > 0 ? Input::KEY_RIGHT : Input::KEY_LEFT;
-            uint64_t now = GetTickCount64();
-            bool needResend = (lastMoveDir != want) || (now - lastHoldTick > 150);
-            if (needResend) {
-                if (lastMoveDir && lastMoveDir != want)
-                    Input::ReleaseKey(lastMoveDir);
-                Input::HoldKey(want);
-                lastMoveDir  = want;
-                lastHoldTick = now;
-            }
-        } else {
-            if (lastMoveDir) {
-                Input::ReleaseKey(lastMoveDir);
-                lastMoveDir  = 0;
-                lastHoldTick = 0;
-            }
+        // ── Mise à jour zone ─────────────────────────────────────────────
+        currentZone = ComputeZone(dist);
+
+        // ── Comportement par zone ────────────────────────────────────────
+        switch (currentZone) {
+
+            case Zone::Far:
+                // Hors de portée — stop tout
+                StopMove();
+                break;
+
+            case Zone::Chase:
+                // Sprint vers l'ennemi
+                if (!attacking) SetMoveDir(toward);
+                break;
+
+            case Zone::Engage:
+                // Zone tampon : avance doucement mais arrête d'osciller
+                // On ralentit : hold key seulement si on s'éloigne
+                if (!attacking) {
+                    // Marche vers l'ennemi mais avec une pause entre chaque hold
+                    // → moins agressif, pas de rubber-band
+                    uint64_t now = GetTickCount64();
+                    if (lastMoveDir != toward || (now - lastHoldTick > 300)) {
+                        SetMoveDir(toward);
+                        // Relâche après 80ms → petit pas, pas de sprint
+                        std::thread([this, toward]() {
+                            std::this_thread::sleep_for(std::chrono::milliseconds(80));
+                            if (lastMoveDir == toward) StopMove();
+                        }).detach();
+                    }
+                }
+                break;
+
+            case Zone::Attack:
+                // Stop mouvement — on est à portée, on attaque
+                StopMove();
+                break;
         }
 
-        // ── ÉTAT ─────────────────────────────────────────────────────────
+        // ── État ennemi ──────────────────────────────────────────────────
         AttackState curr = enemy.atkState;
         bool justFinished = (curr == AttackState::Idle) && (prevEnemyAtk != AttackState::Idle);
         bool inRecovery   = (curr == AttackState::Recovery);
         bool isActive     = (curr == AttackState::Active);
         prevEnemyAtk = curr;
 
-        // ── ATTAQUE ──────────────────────────────────────────────────────
-        if (dist > cfg.attackRange) return;
-        if (attacking)              return;
+        // ── Attaque — uniquement en zone Attack ──────────────────────────
+        if (currentZone != Zone::Attack) return;
+        if (attacking) return;
 
         bool doAttack;
         if (cfg.dexBotOnlyHit) {
@@ -125,16 +193,9 @@ public:
         }
         if (!doAttack) return;
 
-        std::cout << "[DEXBOT] fire dist=" << (int)dist
-                  << " state=" << (int)curr << "\n";
-
-        if (lastMoveDir) { Input::ReleaseKey(lastMoveDir); lastMoveDir = 0; }
-
-        WORD face = std::abs(dx) > 20.f
-            ? (dx > 0 ? Input::KEY_RIGHT : Input::KEY_LEFT) : 0;
-
+        WORD face = std::abs(dx) > 20.f ? toward : 0;
         int delay = cfg.randomizeTimings
-            ? std::max(0, rand() % std::max(1, cfg.timingVarianceMs))
+            ? std::max(0, rand() % std::max(1, cfg.timingVarianceMs) - cfg.timingVarianceMs/2)
             : 0;
         FireAttack(face, delay);
     }
