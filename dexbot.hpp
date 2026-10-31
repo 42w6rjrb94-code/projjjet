@@ -1,7 +1,8 @@
 // dexbot.hpp — C++17, Windows, external
-// Fix: attack hold 30ms (était 80), cooldown 80ms (était 180-200), delayMs floor à 0
-// Fix: chase indépendant de attacking (déjà bon, conservé)
-// Fix: attaque en Idle si dexBotOnlyHit=false, pas seulement en Recovery
+// FIX PRINCIPAL : isLocal null → plus jamais de return early
+// Fallback players[0]/[1] garanti si isLocal non discriminé
+// Attack mode : dexBotOnlyHit=false → attaque aussi en Idle (hitstun = Idle dans BH)
+// Attack range / chase range configurables via menu
 #pragma once
 #include "entities.hpp"
 #include "input.hpp"
@@ -20,35 +21,61 @@ class DexBot {
     std::atomic<bool> attacking{false};
     WORD              lastMoveDir  = 0;
 
-    static constexpr float ATTACK_RANGE = 270.f;
-    static constexpr float CHASE_RANGE  = 2000.f;  // élargi — KYAN chase tôt
+    // Indices stables local/enemy — définis une fois, ne changent pas
+    // Évite le flip si isLocal se met à flicker entre ticks
+    int cachedLocalIdx = -1;
+    int cachedEnemyIdx = -1;
 
     void FireAttack(WORD faceDir, int delayMs) {
         if (attacking.exchange(true)) return;
         std::thread([this, faceDir, delayMs]() {
             if (delayMs > 0)
                 std::this_thread::sleep_for(std::chrono::milliseconds(delayMs));
-
             if (faceDir) {
                 Input::HoldKey(faceDir);
                 std::this_thread::sleep_for(std::chrono::milliseconds(8));
             }
-
-            // Light attack — 30ms hold suffit pour BH, 80ms était trop long
-            // L'ennemi a le temps de dash cancel sur 80ms
             Input::PressKey(Input::KEY_ATTACK, 30, 0);
-
             if (faceDir) Input::ReleaseKey(faceDir);
-
-            // Cooldown = durée approx animation légère BH ~6 frames @60fps = ~100ms
-            // cfg.comboDelayMs (default 0) s'ajoute pour le scaling manuel
-            int cooldown = 100 + std::max(0, cfg.comboDelayMs);
+            int cd = 100 + std::max(0, cfg.comboDelayMs);
             if (cfg.randomizeTimings)
-                cooldown += (rand() % std::max(1, cfg.timingVarianceMs));
-            std::this_thread::sleep_for(std::chrono::milliseconds(cooldown));
-
+                cd += (rand() % std::max(1, cfg.timingVarianceMs));
+            std::this_thread::sleep_for(std::chrono::milliseconds(cd));
             attacking = false;
         }).detach();
+    }
+
+    // Résout indices local/enemy robustement
+    // Priorité : flag isLocal → sinon i==0 = local, i==1 = enemy
+    // Cache les indices pour éviter le flip
+    void ResolveIndices(const std::vector<BHPlayer>& players) {
+        if (players.size() < 2) { cachedLocalIdx = -1; cachedEnemyIdx = -1; return; }
+
+        // Si on a déjà des indices valides ET les adresses sont stables → garde
+        if (cachedLocalIdx >= 0 && cachedEnemyIdx >= 0
+            && cachedLocalIdx < (int)players.size()
+            && cachedEnemyIdx < (int)players.size()) return;
+
+        // Cherche via isLocal flag
+        int li = -1, ei = -1;
+        for (int i = 0; i < (int)players.size(); i++) {
+            if (players[i].isLocal && li < 0) li = i;
+            else if (!players[i].isLocal && ei < 0) ei = i;
+        }
+
+        // FALLBACK : isLocal pas discriminé → 0=local, 1=enemy
+        // BH cave : premier DP capturé = local dans la majorité des cas
+        if (li < 0) li = 0;
+        if (ei < 0) ei = (li == 0) ? 1 : 0;
+        if (li == ei) ei = 1 - li;  // garantit différents
+
+        cachedLocalIdx = li;
+        cachedEnemyIdx = ei;
+
+        std::cout << "[DEXBOT] local=players[" << li << "] addr=0x"
+                  << std::hex << players[li].addr
+                  << " enemy=players[" << ei << "] addr=0x"
+                  << players[ei].addr << std::dec << "\n";
     }
 
 public:
@@ -58,58 +85,65 @@ public:
         if (!cfg.dexBot)          return;
         if (players.size() < 2)   return;
 
-        // Local = players[0] (heuristique cave) ou isLocal flag (AVM2)
-        const BHPlayer* local = nullptr;
-        const BHPlayer* enemy = nullptr;
-        for (const auto& p : players) {
-            if (p.isLocal)  local = &p;
-            else if (!enemy) enemy = &p;
-        }
-        if (!local || !enemy) return;
+        ResolveIndices(players);
+        if (cachedLocalIdx < 0 || cachedEnemyIdx < 0) return;
+        if (cachedLocalIdx >= (int)players.size())     return;
+        if (cachedEnemyIdx >= (int)players.size())     return;
 
-        float dx   = enemy->worldPos.x - local->worldPos.x;
-        float dist = enemy->distToLocal;
+        const BHPlayer& local = players[cachedLocalIdx];
+        const BHPlayer& enemy = players[cachedEnemyIdx];
+
+        float dx   = enemy.worldPos.x - local.worldPos.x;
+        float dist = enemy.distToLocal;
 
         // ── 1. CHASE ─────────────────────────────────────────────────────────
-        // Toujours actif, même si attacking — le bot continue de se déplacer
-        // pendant le cooldown d'attaque pour coller l'ennemi
-        if (dist > ATTACK_RANGE && dist < CHASE_RANGE) {
+        // Indépendant de attacking — continue de chaser pendant le cooldown d'attaque
+        if (dist > cfg.attackRange && dist < cfg.chaseRange) {
             WORD want = dx > 0 ? Input::KEY_RIGHT : Input::KEY_LEFT;
             if (lastMoveDir != want) {
                 if (lastMoveDir) Input::ReleaseKey(lastMoveDir);
                 Input::HoldKey(want);
                 lastMoveDir = want;
             }
-        } else if (dist <= ATTACK_RANGE || dist >= CHASE_RANGE) {
-            if (lastMoveDir) {
-                Input::ReleaseKey(lastMoveDir);
-                lastMoveDir = 0;
-            }
+        } else {
+            if (lastMoveDir) { Input::ReleaseKey(lastMoveDir); lastMoveDir = 0; }
         }
 
-        // ── 2. VULNERABILITY ─────────────────────────────────────────────────
-        AttackState curr = enemy->atkState;
-        bool justFinished = (curr == AttackState::Idle) &&
-                            (prevEnemyAtk != AttackState::Idle);
+        // ── 2. ÉTAT ENNEMI ───────────────────────────────────────────────────
+        AttackState curr = enemy.atkState;
+        bool justFinished = (curr == AttackState::Idle)
+                         && (prevEnemyAtk != AttackState::Idle);
         bool inRecovery   = (curr == AttackState::Recovery);
+        bool inStartup    = (curr == AttackState::Startup);
+        bool isActive     = (curr == AttackState::Active);
         prevEnemyAtk = curr;
 
-        // ── 3. ATTACK ────────────────────────────────────────────────────────
-        if (dist > ATTACK_RANGE) return;
-        if (attacking)           return;
+        // ── 3. DÉCISION D'ATTAQUE ────────────────────────────────────────────
+        if (dist > cfg.attackRange) return;
+        if (attacking)              return;
 
         bool doAttack;
         if (cfg.dexBotOnlyHit) {
-            // Mode punish : attaque seulement en fin d'animation ennemie
+            // Mode punish strict : seulement fin d'animation ou recovery
             doAttack = justFinished || inRecovery;
         } else {
-            // Mode agressif : attaque dès que l'ennemi est Idle (pas en attaque lui-même)
-            doAttack = (curr == AttackState::Idle) || inRecovery || justFinished;
+            // Mode agressif : attaque quand l'ennemi N'A PAS sa hitbox active
+            // Idle = inclut hitstun (enemy vient d'être touché) → attaque
+            // Startup = avant leur hitbox → on peut punch first
+            // Recovery = leur attaque rate → punish
+            // Active = DANGER, leur hitbox est dehors → skip si dexBotNoActive=true
+            if (cfg.dexBotNoActive && isActive)
+                doAttack = false;
+            else
+                doAttack = true;  // tout sauf Active si flag actif
         }
+
         if (!doAttack) return;
 
-        std::cout << "[DEXBOT] fire dist=" << (int)dist
-                  << " state=" << (int)curr << " punish=" << justFinished << "\n";
+        std::cout << "[DEXBOT] fire | dist=" << (int)dist
+                  << " state=" << (int)curr
+                  << " punish=" << justFinished
+                  << " recovery=" << inRecovery << "\n";
 
         if (lastMoveDir) { Input::ReleaseKey(lastMoveDir); lastMoveDir = 0; }
 
@@ -117,9 +151,8 @@ public:
             ? (dx > 0 ? Input::KEY_RIGHT : Input::KEY_LEFT)
             : 0;
 
-        // Jitter minimal — pas de plancher à 16ms ici
         int delay = cfg.randomizeTimings
-            ? std::max(0, (rand() % std::max(1, cfg.timingVarianceMs)) - cfg.timingVarianceMs/2)
+            ? std::max(0, rand() % std::max(1, cfg.timingVarianceMs) - cfg.timingVarianceMs/2)
             : 0;
         FireAttack(face, delay);
     }
