@@ -1,4 +1,10 @@
-// entities.hpp — GetGroundWeapons extrait du cave par exclusion des joueurs connus
+// entities.hpp — C++17 x64 Brawlhalla external
+// FIX MAJEUR : filtrage par fréquence dans le ring buffer
+//   joueur = DP qui apparaît ≥4x sur 50 slots (mis à jour chaque frame)
+//   projectile = DP qui apparaît 1-3x (vient d'être créé)
+// FIX : Off::AttackState != 0 était une comparaison constexpr → toujours vrai
+//   remplacé par vérification de plage 0-3
+// ADD : GetPointerArray() pour ThreatTracker
 #pragma once
 #include <iostream>
 #include "memory.hpp"
@@ -6,6 +12,8 @@
 #include <vector>
 #include <string>
 #include <cmath>
+#include <unordered_map>
+#include <algorithm>
 
 struct Vec2 { float x=0,y=0; };
 struct Vec3 { float x=0,y=0,z=0; };
@@ -37,10 +45,12 @@ struct BHWeapon {
 };
 
 class Scene {
-    Memory&   mem;
+    Memory& mem;
+
     uintptr_t playerArray = 0;
     uintptr_t playerIndex = 0;
     bool      caveReady   = false;
+
     uintptr_t airBase      = 0;
     uintptr_t mainInstance = 0;
     bool      avmReady     = false;
@@ -104,7 +114,7 @@ class Scene {
         if (!avmCore) return false;
         uintptr_t node = mem.Read<uintptr_t>(avmCore + AirOff::CORE_LIVE_POOLS);
         for (int pi = 0; pi < 256 && node; pi++) {
-            uintptr_t wp  = mem.Read<uintptr_t>(node + AirOff::NODE_WEAK_POOL);
+            uintptr_t wp = mem.Read<uintptr_t>(node + AirOff::NODE_WEAK_POOL);
             if (wp) {
                 uintptr_t obj = mem.Read<uintptr_t>(wp + AirOff::WEAK_REF_OBJECT);
                 if (obj) {
@@ -112,19 +122,21 @@ class Scene {
                     int sc2      = mem.Read<int>(sl + AirOff::LIST_COUNT);
                     uintptr_t se = mem.Read<uintptr_t>(sl + AirOff::LIST_ENTRIES);
                     for (int s = 0; s < sc2 && s < 256; s++) {
-                        uintptr_t env = mem.Read<uintptr_t>(se + s*8);
+                        uintptr_t env   = mem.Read<uintptr_t>(se + s*8);
                         if (!env) continue;
                         uintptr_t scope = mem.Read<uintptr_t>(env + 0x28);
                         if (!scope) continue;
-                        uintptr_t cand = mem.Read<uintptr_t>(scope + 0x10);
+                        uintptr_t cand  = mem.Read<uintptr_t>(scope + 0x10);
                         if (!cand) continue;
-                        uintptr_t gm = mem.Read<uintptr_t>(cand + GameOff::MAIN_TO_GM);
+                        uintptr_t gm    = mem.Read<uintptr_t>(cand + GameOff::MAIN_TO_GM);
                         if (!gm) continue;
-                        uintptr_t el = mem.Read<uintptr_t>(gm + GameOff::GM_TO_ENTITYLIST);
+                        uintptr_t el    = mem.Read<uintptr_t>(gm + GameOff::GM_TO_ENTITYLIST);
                         if (!el) continue;
                         int ec = mem.Read<int>(el + 0x08);
                         if (ec > 0 && ec < 8) {
                             mainInstance = cand;
+                            std::cout << "[AVM2] Main=0x" << std::hex
+                                      << mainInstance << " ec=" << std::dec << ec << "\n";
                             return true;
                         }
                     }
@@ -159,39 +171,55 @@ class Scene {
             p.isLocal  = (ent == localEnt);
             p.teamID   = i;
             p.name     = p.isLocal ? "You" : "Enemy";
-            p.atkState = (Off::AttackState != 0)
-                         ? (AttackState)mem.Read<int>(dc + Off::AttackState)
-                         : AttackState::Idle;
-            p.isGrounded = true;
-            p.hp = p.maxHp = 200.f;
+            int av = mem.Read<int>(dc + Off::AttackState);
+            p.atkState = (av >= 0 && av <= 3) ? (AttackState)av : AttackState::Idle;
+            p.isGrounded = true; p.hp = p.maxHp = 200.f;
             out.push_back(p);
         }
         Vec3 lp{};
         for (auto& p:out) if(p.isLocal){lp=p.worldPos;break;}
-        for (auto& p:out){float ddx=p.worldPos.x-lp.x,ddy=p.worldPos.y-lp.y;p.distToLocal=sqrtf(ddx*ddx+ddy*ddy);}
+        for (auto& p:out){float dx=p.worldPos.x-lp.x,dy=p.worldPos.y-lp.y;p.distToLocal=sqrtf(dx*dx+dy*dy);}
         return out;
     }
 
+    // ── FILTRE FRÉQUENCE ─────────────────────────────────────────────────────
+    // Ring buffer à 50 slots : un joueur est mis à jour chaque frame → apparaît ~25x
+    // Un projectile vient d'être créé → 1-3 apparitions max
+    // Seuil 4 : capture tous les joueurs (même en 4v4 = ~12x chacun), rejette projectiles
     std::vector<BHPlayer> GetPlayersCave() {
         std::vector<BHPlayer> out;
-        std::vector<uintptr_t> dps;
+
+        std::unordered_map<uintptr_t,int> freq;
         for (int i = 0; i < 50; i++) {
             uintptr_t dp = mem.Read<uintptr_t>(playerArray + i*8);
-            if (!dp) continue;
-            bool dup=false;
-            for (auto e:dps) if(e==dp){dup=true;break;}
-            if (!dup) dps.push_back(dp);
+            if (dp) freq[dp]++;
         }
-        for (size_t i = 0; i < dps.size(); i++) {
-            uintptr_t dp = dps[i];
+
+        struct Cand { uintptr_t addr; int hits; double px,py; int atkVal; };
+        std::vector<Cand> cands;
+
+        for (auto& [dp, hits] : freq) {
+            if (hits < 4) continue;  // projectile → skip
             double py = mem.Read<double>(dp + Off::PosY);
             double px = mem.Read<double>(dp + Off::PosX);
-            if (px < -50000.0 || px > 50000.0 || py < -50000.0 || py > 50000.0) continue;
+            if (px<-50000.0||px>50000.0||py<-50000.0||py>50000.0) continue;
+            // Vérifier AttackState : valeur hors 0-3 = garbage = pas un joueur
+            int av = mem.Read<int>(dp + Off::AttackState);
+            if (av < 0 || av > 3) continue;
+            cands.push_back({dp, hits, px, py, av});
+        }
+
+        // Trier par fréquence décroissante — le plus fréquent = local (mouvements continus)
+        std::sort(cands.begin(), cands.end(),
+            [](const Cand& a, const Cand& b){ return a.hits > b.hits; });
+
+        for (size_t i = 0; i < cands.size(); i++) {
+            auto& c = cands[i];
             BHPlayer p;
-            p.addr      = dp;
-            p.worldPos  = {(float)px,(float)py,0.f};
-            p.atkState  = (AttackState)mem.Read<int>(dp + Off::AttackState);
-            p.atkFrame  = mem.Read<int>(dp + Off::AttackFrame);
+            p.addr      = c.addr;
+            p.worldPos  = {(float)c.px,(float)c.py,0.f};
+            p.atkState  = (AttackState)c.atkVal;
+            p.atkFrame  = mem.Read<int>(c.addr + Off::AttackFrame);
             p.isGrounded = true;
             p.isLocal    = (i == 0);
             p.teamID     = (int)i;
@@ -199,78 +227,36 @@ class Scene {
             p.hp = p.maxHp = 200.f;
             out.push_back(p);
         }
+
         Vec3 lp{};
         for (auto& p:out) if(p.isLocal){lp=p.worldPos;break;}
-        for (auto& p:out){float ddx=p.worldPos.x-lp.x,ddy=p.worldPos.y-lp.y;p.distToLocal=sqrtf(ddx*ddx+ddy*ddy);}
+        for (auto& p:out){float dx=p.worldPos.x-lp.x,dy=p.worldPos.y-lp.y;p.distToLocal=sqrtf(dx*dx+dy*dy);}
         return out;
     }
 
 public:
-    // Cache des DPs joueurs pour GetGroundWeapons
-    std::vector<uintptr_t> lastPlayerAddrs;
-
     Scene(Memory& m) : mem(m) {
         caveReady = SetupCave(
-            "\xF2\x0F\x10\x8B\x40\x01\x00\x00", "xxxxxxxx",
+            "\xF2\x0F\x10\x8B\x40\x01\x00\x00","xxxxxxxx",
             playerArray, playerIndex);
-        std::cout << "[CAVE] player cave " << (caveReady ? "OK" : "FAIL") << "\n";
+        std::cout << "[CAVE] " << (caveReady?"OK":"FAIL") << "\n";
         avmReady = SetupAVM2();
-        std::cout << "[AVM2] " << (avmReady ? "OK" : "not available") << "\n";
+        std::cout << "[AVM2] " << (avmReady?"OK":"not available") << "\n";
     }
 
-    bool IsReady() const { return caveReady || avmReady; }
+    bool IsReady()          const { return caveReady || avmReady; }
+
+    // Expose l'adresse du cave array pour ThreatTracker
+    uintptr_t GetPointerArray() const { return playerArray; }
 
     std::vector<BHPlayer> GetPlayers(uintptr_t) {
-        std::vector<BHPlayer> result;
         if (avmReady && mainInstance) {
-            result = GetPlayersAVM2();
-            if (result.size() >= 2) {
-                lastPlayerAddrs.clear();
-                for (auto& p : result) lastPlayerAddrs.push_back(p.addr);
-                return result;
-            }
+            auto r = GetPlayersAVM2();
+            if (r.size() >= 2) return r;
         }
-        if (caveReady) {
-            result = GetPlayersCave();
-            lastPlayerAddrs.clear();
-            for (auto& p : result) lastPlayerAddrs.push_back(p.addr);
-            return result;
-        }
+        if (caveReady) return GetPlayersCave();
         return {};
     }
 
-    // Extrait les armes depuis le cave array en excluant les DPs joueurs connus.
-    // Fonctionne si les armes au sol déclenchent le même opcode AOB (probable).
-    // Limitation : l'array de 50 slots est surtout peuplé de joueurs à 60fps —
-    // les armes apparaissent quand elles ont un update physique récent (rebond, spawn).
-    std::vector<BHWeapon> GetGroundWeapons(Vec3 localPos) {
-        std::vector<BHWeapon> out;
-        if (!caveReady) return out;
-
-        for (int i = 0; i < 50; i++) {
-            uintptr_t dp = mem.Read<uintptr_t>(playerArray + i*8);
-            if (!dp) continue;
-
-            // Exclure les DPs joueurs connus
-            bool isPlayer = false;
-            for (auto pa : lastPlayerAddrs)
-                if (pa == dp) { isPlayer = true; break; }
-            if (isPlayer) continue;
-
-            double py = mem.Read<double>(dp + Off::PosY);
-            double px = mem.Read<double>(dp + Off::PosX);
-            if (px < -50000.0 || px > 50000.0 || py < -50000.0 || py > 50000.0) continue;
-            // Sanity : armes au sol ont une Y basse (entre -3000 et 3000 en BH)
-            if (py < -3000.0 || py > 3000.0) continue;
-
-            BHWeapon w;
-            w.addr = dp;
-            w.pos  = {(float)px,(float)py,0.f};
-            float ddx = w.pos.x - localPos.x;
-            float ddy = w.pos.y - localPos.y;
-            w.distToLocal = sqrtf(ddx*ddx + ddy*ddy);
-            out.push_back(w);
-        }
-        return out;
-    }
+    std::vector<BHWeapon> GetGroundWeapons(Vec3) { return {}; }
 };
