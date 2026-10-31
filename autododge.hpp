@@ -1,4 +1,5 @@
 // autododge.hpp — C++17, Windows, external
+// Même fix isLocal que DexBot : fallback players[0] si flag absent
 #pragma once
 #include "entities.hpp"
 #include "input.hpp"
@@ -12,7 +13,7 @@
 
 class AutoDodge {
     Config& cfg;
-    std::unordered_map<size_t, AttackState> prevState;
+    std::unordered_map<int, AttackState> prevState;
 
     static WORD DodgeDir(const BHPlayer& local, const BHPlayer& enemy) {
         float dx = enemy.worldPos.x - local.worldPos.x;
@@ -25,46 +26,46 @@ public:
     AutoDodge(Config& c) : cfg(c) {}
 
     void Tick(const std::vector<BHPlayer>& players) {
-        if (!cfg.autoDodge) return;
-        if (players.size() < 2) return;
+        if (!cfg.autoDodge)       return;
+        if (players.size() < 2)   return;
 
-        constexpr float DODGE_RANGE = 350.f;
+        // Résolution local/enemy — même logique que DexBot, pas de static cache ici
+        // (AutoDodge est stateless entre ticks pour la détection d'onset)
+        int localIdx = -1;
+        for (int i = 0; i < (int)players.size(); i++)
+            if (players[i].isLocal) { localIdx = i; break; }
+        if (localIdx < 0) localIdx = 0;  // fallback
 
-        const BHPlayer* local = &players[0];
+        const BHPlayer& local = players[localIdx];
 
-        for (size_t i = 1; i < players.size(); i++) {
-            const BHPlayer& enemy = players[i];
-            AttackState prev = prevState[i];
+        constexpr float DODGE_RANGE = 510.f;
+
+        for (int ei = 0; ei < (int)players.size(); ei++) {
+            if (ei == localIdx) continue;
+            const BHPlayer& enemy = players[ei];
+
+            AttackState prev = prevState[ei];
             AttackState curr = enemy.atkState;
+            prevState[ei] = curr;
 
-            std::cout << "[DODGE] enemy[" << i << "] atk="
-                      << (int)curr
-                      << " dist=" << (int)enemy.distToLocal << "\n";
+            std::cout << "[DODGE] enemy[" << ei << "] atk="
+                      << (int)curr << " dist=" << (int)enemy.distToLocal << "\n";
 
-            prevState[i] = curr;
+            if (enemy.distToLocal > DODGE_RANGE)       continue;
+            if (cfg.dodgeGroundOnly && !local.isGrounded) continue;
 
-            if (enemy.distToLocal > DODGE_RANGE) continue;
-            if (cfg.dodgeGroundOnly && !local->isGrounded) continue;
-
-            // Trigger sur Idle→non-Idle (onset unique de l'attaque)
-            // BH expose pas Startup/Active séparément sur cet offset
-            bool onset = (curr != AttackState::Idle) &&
-                         (prev == AttackState::Idle);
-
+            // Onset : Idle → non-Idle = début d'attaque ennemie
+            bool onset = (curr != AttackState::Idle) && (prev == AttackState::Idle);
             if (!onset) continue;
 
-            std::cout << "[DODGE] TRIGGER — ennemi " << i
-                      << " onset dist=" << (int)enemy.distToLocal << "\n";
+            std::cout << "[DODGE] TRIGGER enemy[" << ei
+                      << "] dist=" << (int)enemy.distToLocal << "\n";
 
-            // dodgeDelayMs dans le menu Config règle le timing :
-            // Légères  → 0–30ms
-            // Lourdes  → 80–120ms
-            // Sigs     → 250–350ms (couvre le startup de charge)
             int delay = Input::Jitter(cfg.dodgeDelayMs, cfg.timingVarianceMs);
             if (delay > 0)
                 std::this_thread::sleep_for(std::chrono::milliseconds(delay));
 
-            WORD dir = DodgeDir(*local, enemy);
+            WORD dir = DodgeDir(local, enemy);
             Input::HoldKey(dir);
             std::this_thread::sleep_for(std::chrono::milliseconds(20));
             Input::PressKey(Input::KEY_DODGE, 50, cfg.timingVarianceMs);
