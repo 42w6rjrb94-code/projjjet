@@ -1,3 +1,6 @@
+// main.cpp — C++17, Windows
+// Fix: camera suit le local player (pas la moyenne — décalait tout le W2S)
+// Fix: zoom par référence au renderer → slider ESP modifie en direct
 #include "hwid.hpp"
 #include "memory.hpp"
 #include "config.hpp"
@@ -32,9 +35,7 @@ int main() {
     std::string hwid = HWID::Generate();
     std::cout << "HWID: " << hwid << "\n";
     if (!HWID::IsAuthorized(hwid)) {
-        MessageBoxW(nullptr,
-            L"Licence invalide.",
-            L"BH Cheat", MB_ICONERROR);
+        MessageBoxW(nullptr, L"Licence invalide.", L"BH Cheat", MB_ICONERROR);
         return 1;
     }
 
@@ -49,10 +50,9 @@ int main() {
 
     Scene scene(mem);
     if (!scene.IsReady()) {
-        std::cerr << "Code cave injection failed — AOB not found\n";
+        std::cerr << "Cave + AVM2 echecs — quitte\n";
         return 1;
     }
-    std::cout << "Code cave OK\n";
 
     AutoDodge  autoDodge(cfg);
     DexBot     dexBot(cfg);
@@ -63,18 +63,18 @@ int main() {
         std::cerr << "Overlay impossible\n";
         return 1;
     }
-
     renderer.SetInteractive(true);
 
     bool menuOpen = true;
     std::thread hotkeys(HotKeyLoop, std::ref(menuOpen), std::ref(renderer));
 
-    uintptr_t localAddr = 0;
-    float camX = 0.f, camY = 0.f, zoom = 6.f;
+    uintptr_t unused  = 0;
+    float     camX    = 0.f;
+    float     camY    = 0.f;
+    float     zoom    = 6.f;  // calibrer via slider ESP tab jusqu'à ce que les boxes collent
+    int       dbgTick = 0;
 
     MSG msg{};
-    int debugTick = 0;
-
     while (g_run) {
         while (PeekMessageW(&msg, nullptr, 0, 0, PM_REMOVE)) {
             if (msg.message == WM_QUIT) g_run = false;
@@ -82,30 +82,39 @@ int main() {
             DispatchMessageW(&msg);
         }
 
-        auto players = scene.GetPlayers(localAddr);
+        auto players = scene.GetPlayers(unused);
         auto weapons = scene.GetGroundWeapons(
             players.empty() ? Vec3{} : players[0].worldPos);
 
-        // Debug toutes les 60 frames (~0.5 sec)
-        if (++debugTick % 60 == 0) {
-            std::cout << "players=" << std::dec << players.size();
-            for (auto& p : players) {
-                std::cout << " | dp=0x" << std::hex << p.addr
-                          << " x=" << std::dec << (int)p.worldPos.x
-                          << " y=" << (int)p.worldPos.y
-                          << " atk=" << (int)p.atkState;
+        // Camera sur local player — pas la moyenne
+        // Moyenne = repère se décale quand ennemi est loin = boxes décalées
+        bool foundLocal = false;
+        for (const auto& p : players) {
+            if (p.isLocal) {
+                camX = p.worldPos.x;
+                camY = p.worldPos.y;
+                foundLocal = true;
+                break;
             }
-            std::cout << "\n";
         }
-
-        if (!players.empty()) {
-            float sx = 0.f, sy = 0.f;
-            for (auto& p : players) {
-                sx += p.worldPos.x;
-                sy += p.worldPos.y;
-            }
+        // Fallback si isLocal pas encore discriminé (début de cave, 0 frames capturées)
+        if (!foundLocal && !players.empty()) {
+            float sx=0.f, sy=0.f;
+            for (const auto& p : players) { sx+=p.worldPos.x; sy+=p.worldPos.y; }
             camX = sx / (float)players.size();
             camY = sy / (float)players.size();
+        }
+
+        // Debug ~1/sec (120 ticks × 8ms = 960ms)
+        if (++dbgTick % 120 == 0) {
+            std::cout << "players=" << std::dec << players.size()
+                      << " weapons=" << weapons.size()
+                      << " cam=(" << (int)camX << "," << (int)camY << ")";
+            for (const auto& p : players)
+                std::cout << " | " << p.name
+                          << " atk=" << (int)p.atkState
+                          << " d=" << (int)p.distToLocal;
+            std::cout << "\n";
         }
 
         autoDodge .Tick(players);
